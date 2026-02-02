@@ -1,0 +1,11 @@
+# Applies to debug build and release build
+# "target-cpu=native" — Optimizes for the CPU that compiles the code 
+[build]
+rustflags = ["-C" , "target-cpu=native" ,
+]
+
+# Applies to release build only
+[profile.release]
+lto = "thin" # lto -> link time optimisation -> "thin" => better runtime perf , slow release build
+codegen-units = 1 # slow compiation . better optimisation , 16 unit parallel codegen
+panic = "abort" # abort on panic
