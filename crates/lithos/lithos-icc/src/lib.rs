@@ -1,4 +1,6 @@
+mod broadcast;
 mod ring;
 mod seqlock;
-mod broadcast;
 mod shm_layout;
+
+pub use ring::RingConfig;
