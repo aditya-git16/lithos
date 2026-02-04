@@ -50,3 +50,22 @@ impl MmapFileMut {
         self.mmap.len()
     }
 }
+
+impl MmapFile {
+    /// Open an existing file and map it read-only.
+    pub fn open_ro<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let file = OpenOptions::new().read(true).open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        Ok(Self { _file: file, mmap })
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *const u8 {
+        self.mmap.as_ptr()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.mmap.len()
+    }
+}
