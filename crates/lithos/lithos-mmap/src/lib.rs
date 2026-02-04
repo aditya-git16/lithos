@@ -6,12 +6,16 @@ use std::{
 };
 
 pub struct MmapFileMut {
+    /// File handle kept alive to maintain the memory map validity
     _file: File,
+    /// Memory-mapped region providing mutable access to file contents
     mmap: MmapMut,
 }
 
 pub struct MmapFile {
+    /// File handle kept alive to maintain the memory map validity
     _file: File,
+    /// Memory-mapped region providing read-only access to file contents
     mmap: Mmap,
 }
 
