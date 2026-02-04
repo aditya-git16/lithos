@@ -19,7 +19,7 @@ impl RingConfig {
     /// let rc = RingConfig::new(8);
     /// assert_eq!(rc.mask(), 7);
     /// ```
-    #[inline]
+    #[inline(always)]
     pub fn mask(&self) -> u64 {
         (self.capacity as u64) - 1
     }
