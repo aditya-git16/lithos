@@ -69,3 +69,39 @@ impl MmapFile {
         self.mmap.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn mmap_roundtrip_bytes() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = format!("/tmp/lithos_mmap_test_{ts}");
+        let size = 4096;
+
+        {
+            let mut mm = MmapFileMut::create_rw(&path, size).unwrap();
+            unsafe {
+                let p = mm.as_mut_ptr();
+                *p.add(0) = 0xAB;
+                *p.add(1) = 0xCD;
+            }
+        }
+        {
+            let mm = MmapFile::open_ro(&path).unwrap();
+            unsafe {
+                let p = mm.as_ptr();
+                assert_eq!(*p.add(0), 0xAB);
+                assert_eq!(*p.add(1), 0xCD);
+            }
+        }
+
+        let _ = fs::remove_file(&path);
+    }
+}
