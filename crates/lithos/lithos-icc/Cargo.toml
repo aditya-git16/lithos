@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-lithos-mmap ={ path = "../lithos-mmap" }
+lithos-mmap = { path = "../lithos-mmap" }
+
+[dev-dependencies]
+lithos-events = { path = "../lithos-events" }
