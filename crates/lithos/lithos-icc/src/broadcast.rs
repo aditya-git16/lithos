@@ -1,6 +1,6 @@
-use crate::ring::{apply_overrun_policy, seq_to_index, RingConfig};
+use crate::ring::{RingConfig, apply_overrun_policy, seq_to_index};
 use crate::seqlock::SeqlockSlot;
-use crate::shm_layout::{bytes_for_ring, RingHeader, RING_MAGIC, RING_VERSION};
+use crate::shm_layout::{RING_MAGIC, RING_VERSION, RingHeader, bytes_for_ring};
 use lithos_mmap::{MmapFile, MmapFileMut};
 use std::io;
 use std::marker::PhantomData;

@@ -5,13 +5,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// - single write
 /// - multiple readers
 pub struct SeqlockSlot<T: Copy> {
-    seq : AtomicU64,
-    data : MaybeUninit<T>
+    seq: AtomicU64,
+    data: MaybeUninit<T>,
 }
 
-impl<T: Copy> SeqlockSlot<T>{
+impl<T: Copy> SeqlockSlot<T> {
     #[inline(always)]
-    pub fn init(&mut self){
+    pub fn init(&mut self) {
         self.seq.store(0, Ordering::Relaxed);
     }
 
