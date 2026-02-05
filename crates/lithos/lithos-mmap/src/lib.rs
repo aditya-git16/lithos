@@ -21,14 +21,14 @@ pub struct MmapFile {
 
 impl MmapFileMut {
     /// Create a new file to `size_bytes` and map it read-write
-    pub fn create_rw<P: AsRef<Path>>(path: P, size_bytes: u64) -> io::Result<Self> {
+    pub fn create_rw<P: AsRef<Path>>(path: P, size_bytes: usize) -> io::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .truncate(true)
             .open(path)?;
-        file.set_len(size_bytes)?;
+        file.set_len(size_bytes as u64)?;
 
         let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self { _file: file, mmap })

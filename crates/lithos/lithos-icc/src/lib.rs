@@ -3,6 +3,5 @@ mod ring;
 mod seqlock;
 mod shm_layout;
 
+pub use broadcast::{BroadcastReader, BroadcastWriter};
 pub use ring::RingConfig;
-pub use seqlock::SeqlockSlot;
-pub use shm_layout::RingHeader;

@@ -23,6 +23,9 @@ version = "0.1.0"
 [[package]]
 name = "lithos-icc"
 version = "0.1.0"
+dependencies = [
+ "lithos-mmap",
+]
 
 [[package]]
 name = "lithos-journal"
