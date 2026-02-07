@@ -141,7 +141,11 @@ fn run_writer(path: &str) {
             if (i + 1) % 25_000 == 0 {
                 let elapsed = start.elapsed();
                 let rate = (i + 1) as f64 / elapsed.as_secs_f64();
-                log!("[WRITER] Progress: {}/{} events ({rate:.0} ev/s)", i + 1, EVENT_COUNT);
+                log!(
+                    "[WRITER] Progress: {}/{} events ({rate:.0} ev/s)",
+                    i + 1,
+                    EVENT_COUNT
+                );
             }
         }
     }

@@ -75,6 +75,9 @@ dependencies = [
 [[package]]
 name = "onyx-core"
 version = "0.1.0"
+dependencies = [
+ "lithos-events",
+]
 
 [[package]]
 name = "onyx-md"
