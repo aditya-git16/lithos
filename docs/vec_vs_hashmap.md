@@ -62,7 +62,7 @@ Virtual Address  →  [TLB Lookup]  →  Physical Address  →  [Cache Lookup]  
 
 TLB capacity is small (~64–1536 entries depending on level). With 4 KB pages, 1024 TLB entries cover only 4 MB. If your data structure spans 100 MB with random access, you'll get constant TLB misses — each costing ~10–50 ns for a page table walk.
 
-**Implication for data structures**: A 5.6 MB flat array (65K × 88 bytes) spans ~1,400 standard pages. If accesses are random (many different symbols), you may TLB-miss frequently. With 2 MB huge pages, the same array spans only 3 pages — virtually eliminating TLB misses. This is why VEX-CORE's mmap work with huge pages matters.
+**Implication for data structures**: A 5.6 MB flat array (65K × 88 bytes) spans ~1,400 standard pages. If accesses are random (many different symbols), you may TLB-miss frequently. With 2 MB huge pages, the same array spans only 3 pages — virtually eliminating TLB misses. This is why lithos mmap work with huge pages matters.
 
 ### 1.4 Branch Prediction and Speculative Execution
 

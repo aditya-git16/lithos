@@ -44,7 +44,7 @@ impl MarketsState {
     /// Takes index and assigns it as symbol_id
     /// Max number of symbols -> 256
     pub fn default_from_index(index: usize) -> Self {
-        let mut market_state= MarketsState::default();
+        let mut market_state = MarketsState::default();
         market_state.symbol_id = SymbolId(index as u16);
         market_state
     }

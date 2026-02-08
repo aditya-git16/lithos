@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 onyx-core = { path = "../onyx-core" }
 lithos-icc = { path = "../../lithos/lithos-icc" }
+lithos-events = { path = "../../lithos/lithos-events" }
