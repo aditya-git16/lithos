@@ -11,7 +11,7 @@
 
 use lithos_events::{SymbolId, TopOfBook};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MarketsState {
     /// Symbol of this state
     pub symbol_id: SymbolId,
@@ -36,4 +36,16 @@ pub struct MarketsState {
     /// Spread (in ticks) , ask_price - bid_price
     /// Value is always > 0 for a valid orderbook since ask_price is greater than bid_price
     pub spread_ticks: i64,
+}
+
+impl MarketsState {
+    /// Create default MarketState with correct symbol_id
+    ///
+    /// Takes index and assigns it as symbol_id
+    /// Max number of symbols -> 256
+    pub fn default_from_index(index: usize) -> Self {
+        let mut market_state = MarketsState::default();
+        market_state.symbol_id = SymbolId(index as u16);
+        return market_state;
+    }
 }

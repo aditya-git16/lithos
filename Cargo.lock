@@ -80,5 +80,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "onyx-md"
+name = "onyx-engine"
 version = "0.1.0"
+dependencies = [
+ "lithos-icc",
+ "onyx-core",
+]
