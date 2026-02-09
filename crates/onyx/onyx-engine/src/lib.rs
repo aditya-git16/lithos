@@ -66,7 +66,9 @@ impl OnyxEngine {
         // so we match the event the event with its type and then process accordingly
         match event {
             Event::TopOfBook(tob) => {
-                let _ = self.market_state_manager.update_market_state_tob(tob);
+                if let Err(e) = self.market_state_manager.update_market_state_tob(tob) {
+                    eprintln!("TOB update failed : {}" , e);
+                }
             }
         }
     }
