@@ -100,6 +100,8 @@
 //  Vec<T> indexed            | <1 ns   | Great   | No      | Minimal
 //  Box<[T; N]>               | <1 ns   | Great   | No      | Minimal
 
+use lithos_events::TopOfBook;
+
 use crate::market_state::MarketsState;
 
 ///  Max symbols we will track
@@ -122,5 +124,22 @@ impl MarketStateManager {
         Self {
             markets: std::array::from_fn(|i| MarketsState::default_from_index(i)),
         }
+    }
+
+    pub fn update_market_state_tob(&mut self, tob: &TopOfBook) -> Result<(), &'static str> {
+        // Use symbol id as array index: SymbolId is a newtype over u16,
+        // so .0 gives the raw value; usize is required for indexing.
+        let tob_symbol = tob.symbol_id.0 as usize;
+
+        if tob_symbol >= MAX_SYMBOLS {
+            return Err("invalid index");
+        }
+
+        // gets mutable ref to the market state at that index
+        let market = &mut self.markets[tob_symbol];
+
+        market.update_state_tob(&tob);
+
+        Ok(())
     }
 }

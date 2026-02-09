@@ -11,7 +11,7 @@
 
 use lithos_events::{SymbolId, TopOfBook};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MarketsState {
     /// Symbol of this state
     pub symbol_id: SymbolId,
@@ -47,5 +47,12 @@ impl MarketsState {
         let mut market_state = MarketsState::default();
         market_state.symbol_id = SymbolId(index as u16);
         market_state
+    }
+
+    pub fn update_state_tob(&mut self, tob: &TopOfBook) {
+        self.last_update_ns = tob.ts_event_ns;
+        self.last_tob = *tob;
+        self.mid_x2 = tob.bid_px_ticks + tob.ask_px_ticks;
+        self.spread_ticks = tob.ask_px_ticks - tob.bid_px_ticks
     }
 }
