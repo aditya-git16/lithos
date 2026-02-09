@@ -31,7 +31,7 @@ impl OnyxEngine {
     // First create/initialise the engine
     pub fn new <P : AsRef<Path>> (path : P) -> std::io::Result<Self> {
         let market_state_manager = MarketStateManager::new();
-        // this part can/should be abstracted
+        // this part can be abstracted ?
         let reader = BroadcastReader::<Event>::open(path)?;
         Ok(OnyxEngine {
             market_state_manager,
