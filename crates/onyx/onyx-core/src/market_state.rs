@@ -10,6 +10,7 @@
 // Strust values need to be public since we will use functions to update the state
 
 use lithos_events::{SymbolId, TopOfBook};
+use tracing::debug;
 
 #[derive(Debug, Default, Clone)]
 pub struct MarketsState {
@@ -46,6 +47,7 @@ impl MarketsState {
     pub fn default_from_index(index: usize) -> Self {
         let mut market_state = MarketsState::default();
         market_state.symbol_id = SymbolId(index as u16);
+        debug!("market_state[{}]: {:?}", index, market_state);
         market_state
     }
 

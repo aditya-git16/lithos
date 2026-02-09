@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 lithos-events = { path = "../../lithos/lithos-events" }
+tracing = "0.1"

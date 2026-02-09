@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 lithos-events = {path = "../../crates/lithos/lithos-events"}
 onyx-engine = {path = "../../crates/onyx/onyx-engine"}
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
