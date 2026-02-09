@@ -69,7 +69,7 @@ name = "onyx"
 version = "0.1.0"
 dependencies = [
  "lithos-events",
- "lithos-icc",
+ "onyx-engine",
 ]
 
 [[package]]

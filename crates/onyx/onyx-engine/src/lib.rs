@@ -8,6 +8,7 @@
 // We also have multiple markets so we need to need to define a data struct which holds
 // the symbol id and market state map , (e.g something like a hashmap)
 
+use std::path::Path;
 use lithos_events::Event;
 use lithos_icc::BroadcastReader;
 use onyx_core::MarketStateManager;
@@ -28,10 +29,10 @@ pub struct OnyxEngine {
 
 impl OnyxEngine {
     // First create/initialise the engine
-    pub fn new() -> std::io::Result<Self> {
+    pub fn new <P : AsRef<Path>> (path : P) -> std::io::Result<Self> {
         let market_state_manager = MarketStateManager::new();
         // this part can/should be abstracted
-        let reader = BroadcastReader::<Event>::open("/tmp/lithos_md_bus")?;
+        let reader = BroadcastReader::<Event>::open(path)?;
         Ok(OnyxEngine {
             market_state_manager,
             reader,
