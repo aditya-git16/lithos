@@ -25,9 +25,6 @@ pub enum ConfigError {
 
     #[error("failed to parse config")]
     Parse(#[from] toml::de::Error),
-
-    #[error("validation failed: {0}")]
-    Invalid(String),
 }
 
 mod defaults {
