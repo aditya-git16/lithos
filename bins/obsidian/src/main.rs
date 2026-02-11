@@ -1,12 +1,25 @@
 use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::{BroadcastWriter, RingConfig};
-use std::time::{Duration, Instant};
+use serde::Deserialize;
+use tungstenite::{Message, connect};
 
 fn now_ns() -> u64 {
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap();
     t.as_nanos() as u64
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BinanceDto {
+    pub u: u64,    // order book updateId
+    pub s: String, // symbol
+    pub b: String,    // best bid price
+    #[serde(rename = "B")]
+    pub b_qty: String,    // best bid qty
+    pub a: String,    // best ask price
+    #[serde(rename = "A")]
+    pub a_qty: String,    // best ask qty
 }
 
 fn main() {
@@ -18,33 +31,37 @@ fn main() {
 
     eprintln!("OBSIDIAN: publishing TopOfBook to {path} (cap={capacity})");
 
-    let mut bid = 100_000i64;
-
-    let mut last = Instant::now();
-    let mut count: u64 = 0;
+    let (mut socket, _resposne) =
+        connect("wss://stream.binance.com:9443/ws/btcusdt@bookTicker").expect("failed to connect");
+    println!("Connected to Binance Websocket Server");
 
     loop {
-        bid += 1;
-        let ask = bid + 10;
+        let data = socket.read().expect("unable to read data");
 
-        let ev = TopOfBook {
-            ts_event_ns: now_ns(),
-            symbol_id: SymbolId(1),
-            bid_px_ticks: bid,
-            bid_qty_lots: 10,
-            ask_px_ticks: ask,
-            ask_qty_lots: 12,
-        };
-
-        bus.publish(ev);
-        count += 1;
-
-        if last.elapsed() >= Duration::from_secs(1) {
-            eprintln!("OBSIDIAN: publish rate ~ {} ev/s", count);
-            count = 0;
-            last = Instant::now();
+        match data {
+            Message::Text(text) => {
+                let dto: BinanceDto = serde_json::from_str(&text).expect("unable to parse");
+                let bid_px: f64 = dto.b.parse().expect("invalid bid price");
+                let bid_qty: f64 = dto.b_qty.parse().expect("invalid bid qty");
+                let ask_px: f64 = dto.a.parse().expect("invalid ask price");
+                let ask_qty: f64 = dto.a_qty.parse().expect("invalid ask qty");
+                let tick_size = 0.01;
+                let lot_size = 0.001;
+                let tob = TopOfBook {
+                    ts_event_ns : now_ns(),
+                    symbol_id : SymbolId(1),
+                    bid_px_ticks: (bid_px / tick_size).round() as i64,
+                    bid_qty_lots: (bid_qty / lot_size).round() as i64,
+                    ask_px_ticks: (ask_px / tick_size).round() as i64,
+                    ask_qty_lots: (ask_qty / lot_size).round() as i64,
+                };
+                bus.publish(tob);
+            }
+            Message::Ping(payload) => {
+                socket.write(Message::Pong(payload)).ok();
+            }
+            Message::Close(_) => break,
+            _ => {}
         }
-
-        std::hint::spin_loop();
     }
 }

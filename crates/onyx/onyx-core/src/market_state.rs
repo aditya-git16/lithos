@@ -47,7 +47,6 @@ impl MarketsState {
     pub fn default_from_index(index: usize) -> Self {
         let mut market_state = MarketsState::default();
         market_state.symbol_id = SymbolId(index as u16);
-        debug!("market_state[{}]: {:?}", index, market_state);
         market_state
     }
 
@@ -55,6 +54,9 @@ impl MarketsState {
         self.last_update_ns = tob.ts_event_ns;
         self.last_tob = *tob;
         self.mid_x2 = tob.bid_px_ticks + tob.ask_px_ticks;
-        self.spread_ticks = tob.ask_px_ticks - tob.bid_px_ticks
+        self.spread_ticks = tob.ask_px_ticks - tob.bid_px_ticks;
+        if tob.symbol_id == SymbolId(1) {
+            debug!("market_state[{}]: {:?}", tob.symbol_id.0, self);
+        }
     }
 }
