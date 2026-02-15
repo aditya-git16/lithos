@@ -40,7 +40,7 @@ fn main() {
 
         match data {
             Message::Text(text) => {
-                let dto: BinanceDto = serde_json::from_str(&text).expect("unable to parse");
+                let dto: BinanceDto = unsafe {sonic_rs::from_slice_unchecked(text.as_ref()).expect("unable to parse")};
 
                 let tob = TopOfBook {
                     ts_event_ns: now_ns(),
