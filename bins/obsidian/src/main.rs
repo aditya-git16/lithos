@@ -43,8 +43,8 @@ fn main() {
                 let dto: BinanceDto = serde_json::from_str(&text).expect("unable to parse");
 
                 let tob = TopOfBook {
-                    ts_event_ns: now_ns(),  // consider dto.E if available
-                    symbol_id: SymbolId(1), // map dto.s -> SymbolId once in a table
+                    ts_event_ns: now_ns(),
+                    symbol_id: SymbolId(1),
                     bid_px_ticks: parse_px_2dp(&dto.b),
                     bid_qty_lots: parse_qty_3dp(&dto.b_qty),
                     ask_px_ticks: parse_px_2dp(&dto.a),
