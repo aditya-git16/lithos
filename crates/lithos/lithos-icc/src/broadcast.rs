@@ -1,17 +1,22 @@
-//! Single-producer, multi-consumer (SPMC) broadcast ring buffer over shared memory.
+//! Multi-producer, multi-consumer (MPMC) broadcast ring buffer over shared memory.
 //!
-//! This module provides a lock-free broadcast mechanism where one writer publishes
-//! messages that can be read by multiple independent readers. The ring buffer lives
-//! in a memory-mapped file, enabling inter-process communication (IPC).
+//! This module provides a lock-free broadcast mechanism where one or more writers
+//! publish messages that can be read by multiple independent readers. The ring buffer
+//! lives in a memory-mapped file, enabling inter-process communication (IPC).
 //!
 //! # Design
-//! - **Writer**: Holds exclusive write access; publishes items sequentially.
+//! - **Writers**: Each writer claims a slot atomically via `write_seq.fetch_add(1)`.
+//!   Use one `BroadcastWriter` per thread or process; multiple writers open the same
+//!   file and each `publish()` gets a unique sequence number, so no two writers
+//!   write the same slot concurrently.
 //! - **Readers**: Each reader maintains its own cursor and can independently consume
 //!   messages at its own pace. Slow readers that fall behind may experience overruns.
 //!
 //! # Thread Safety
-//! - `BroadcastWriter` is `Send` but NOT `Sync` (single-producer).
-//! - `BroadcastReader` is `Send` but NOT `Sync` (each reader is independent).
+//! - `BroadcastWriter` is `Send` but not `Sync`: do not share one instance across
+//!   threads. For multiple producers, open the ring from each thread (or process)
+//!   to get a separate `BroadcastWriter` per producer.
+//! - `BroadcastReader` is `Send` but not `Sync` (each reader is independent).
 
 use crate::ring::{RingConfig, apply_overrun_policy, seq_to_index};
 use crate::seqlock::SeqlockSlot;
@@ -26,8 +31,9 @@ use std::sync::atomic::Ordering;
 
 /// The writer side of a broadcast ring buffer.
 ///
-/// Creates and owns a memory-mapped file containing the ring buffer.
-/// Only one writer should exist per ring buffer file (single-producer guarantee).
+/// Creates or opens a memory-mapped file containing the ring buffer.
+/// For multiple producers, open the same file from each thread (or process) to get
+/// one `BroadcastWriter` per producer; each `publish()` atomically claims a slot.
 ///
 /// # Type Parameter
 /// - `T`: The element type. Must be `Copy` to allow safe bitwise duplication
@@ -118,6 +124,19 @@ impl<T: Copy> BroadcastWriter<T> {
         })
     }
 
+    /// Opens an existing ring buffer for writing.
+    ///
+    /// Multiple producers can open the same file (one `BroadcastWriter` per thread or
+    /// process); each `publish()` atomically claims a unique slot via `write_seq`.
+    pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let mut mm = MmapFileMut::open_rw(path)?;  // need open_rw in lithos_mmap
+        let base = mm.as_mut_ptr();
+        let h = unsafe { &*(base as *const RingHeader) };
+        let _ = h.validate::<T>();
+        let cap = h.capacity;
+        Ok(Self { _mm: mm, base, mask: cap - 1, _pd: PhantomData })
+    }
+
     /// Returns a reference to the ring header.
     ///
     /// # Safety
@@ -142,12 +161,13 @@ impl<T: Copy> BroadcastWriter<T> {
     /// Publishes a single item to the ring buffer.
     ///
     /// This is a lock-free operation that:
-    /// 1. Atomically increments the write sequence number
-    /// 2. Writes the value to the corresponding slot using seqlock protocol
+    /// 1. Atomically increments the write sequence number (claiming a unique slot)
+    /// 2. Writes the value to the corresponding slot using the seqlock protocol
     ///
-    /// # Single-Producer Guarantee
-    /// This method assumes single-threaded access. Calling from multiple threads
-    /// simultaneously will cause data races.
+    /// # Concurrency
+    /// Do not call from multiple threads using the same `BroadcastWriter` (this type
+    /// is not `Sync`). For multiple producers, use one `BroadcastWriter` per thread
+    /// or process, each opened on the same ring file.
     #[inline(always)]
     pub fn publish(&mut self, value: T) {
         // Relaxed ordering is sufficient: the seqlock in the slot provides

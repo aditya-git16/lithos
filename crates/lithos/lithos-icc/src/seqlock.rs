@@ -69,9 +69,12 @@ impl<T: Copy> SeqlockSlot<T> {
     /// 3. Write the data
     /// 4. Store `seq + 2` (even) with Release ordering → signals "write complete"
     ///
-    /// # Single-Writer Assumption
-    /// This method is NOT thread-safe for multiple writers. Only one thread
-    /// should ever call `write()` on a given slot.
+    /// # Single-Writer Per Slot
+    /// This method is not thread-safe for multiple writers on the *same* slot.
+    /// Only one thread should call `write()` on a given slot at a time. In the
+    /// broadcast ring, multiple producers are safe because each `publish()` gets
+    /// a unique sequence number and thus a unique slot, so no two writers touch
+    /// the same slot concurrently.
     ///
     /// # Memory Ordering
     /// - `Release` on seq stores ensures the data write is visible to readers
