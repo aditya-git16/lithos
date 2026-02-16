@@ -7,3 +7,5 @@ edition = "2024"
 lithos-events = { path = "../../lithos/lithos-events"}
 lithos-icc = { path = "../../lithos/lithos-icc"}
 obsidian-core ={ path = "../obsidian-core"}
+obsidian-config = {path = "../obsidian-config"}
+tungstenite = {version = "0.28.0" , features = ["native-tls" , "rustls"]}
