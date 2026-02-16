@@ -10,10 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ObsidianConfig::load(&config_path)?;
 
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("INFO")),
-        )
-        .init();
+    .with_env_filter(
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+    )
+    .init();
 
     BroadcastWriter::<TopOfBook>::create(&config.shm_file_path, RingConfig::new(config.capacity))
         .expect("failed to create mmap ring");

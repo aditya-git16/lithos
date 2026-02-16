@@ -11,3 +11,4 @@ obsidian-config = {path = "../obsidian-config"}
 obsidian-util = {path = "../obsidian-util"}
 tungstenite = {version = "0.28.0" , features = ["native-tls" , "rustls"]}
 sonic-rs = "0.5.6"
+tracing = {workspace = true}

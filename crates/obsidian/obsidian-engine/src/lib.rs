@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket, connect};
+use tracing::debug;
 
 pub type WebsocketStream = WebSocket<MaybeTlsStream<TcpStream>>;
 
@@ -47,6 +48,7 @@ impl ObsidianEngine {
                         ask_qty_lots: parse_qty_3dp(&dto.a_qty),
                     };
                     self.writer.publish(Event::TopOfBook(tob));
+                    debug!("market_state[{}]: {:?}", tob.symbol_id.0, tob);
                 }
                 Message::Ping(payload) => {
                     self.socket.write(Message::Pong(payload)).ok();

@@ -420,6 +420,7 @@ dependencies = [
  "obsidian-core",
  "obsidian-util",
  "sonic-rs",
+ "tracing",
  "tungstenite",
 ]
 

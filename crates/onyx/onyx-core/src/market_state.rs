@@ -55,8 +55,6 @@ impl MarketsState {
         self.last_tob = *tob;
         self.mid_x2 = tob.bid_px_ticks + tob.ask_px_ticks;
         self.spread_ticks = tob.ask_px_ticks - tob.bid_px_ticks;
-        if tob.symbol_id == SymbolId(1) {
-            debug!("market_state[{}]: {:?}", tob.symbol_id.0, self);
-        }
+        debug!("market_state[{}]: {:?}", tob.symbol_id.0, self);
     }
 }
