@@ -33,5 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    Ok(())
+    // block main thread from exiting
+    loop { std::thread::park(); }
 }
