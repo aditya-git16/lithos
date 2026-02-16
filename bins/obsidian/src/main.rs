@@ -1,16 +1,10 @@
 use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::{BroadcastWriter, RingConfig};
+use obsidian_util::timestamp::now_ns;
 use serde::Deserialize;
 use tracing::info;
 use tungstenite::{Message, connect};
 use tracing_subscriber::EnvFilter;
-
-fn now_ns() -> u64 {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap();
-    t.as_nanos() as u64
-}
 
 #[derive(Debug, Deserialize)]
 pub struct BinanceDto <'a> {

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 lithos-events = {path = "../../crates/lithos/lithos-events"}
 lithos-icc = {path = "../../crates/lithos/lithos-icc"}
+obsidian-util = {path = "../../crates/obsidian/obsidian-util"}
 tungstenite = {version = "0.28.0" , features = ["native-tls" , "rustls"]}
 sonic-rs = "0.5.6"
 tracing-subscriber = { workspace = true }
