@@ -1,7 +1,9 @@
 use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::{BroadcastWriter, RingConfig};
 use serde::Deserialize;
+use tracing::info;
 use tungstenite::{Message, connect};
+use tracing_subscriber::EnvFilter;
 
 fn now_ns() -> u64 {
     let t = std::time::SystemTime::now()
@@ -26,14 +28,19 @@ fn main() {
     let path = "/tmp/lithos_md_bus";
     let capacity = 1 << 16;
 
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_|EnvFilter::new("INFO")))
+        .init();
+
     let mut bus = BroadcastWriter::<TopOfBook>::create(path, RingConfig::new(capacity))
         .expect("failed to create mmap ring");
 
-    eprintln!("OBSIDIAN: publishing TopOfBook to {path} (cap={capacity})");
+    info!("OBSIDIAN: publishing TopOfBook to {path} (cap={capacity})");
 
     let (mut socket, _resposne) =
         connect("wss://stream.binance.com:9443/ws/btcusdt@bookTicker").expect("failed to connect");
-    println!("Connected to Binance Websocket Server");
+    info!("Connected to Binance Websocket Server");
 
     loop {
         let data = socket.read().expect("unable to read data");
