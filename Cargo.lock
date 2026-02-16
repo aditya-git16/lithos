@@ -387,8 +387,8 @@ dependencies = [
  "lithos-icc",
  "obsidian-config",
  "obsidian-core",
+ "obsidian-engine",
  "obsidian-util",
- "sonic-rs",
  "tracing",
  "tracing-subscriber",
  "tungstenite",
@@ -418,6 +418,8 @@ dependencies = [
  "lithos-icc",
  "obsidian-config",
  "obsidian-core",
+ "obsidian-util",
+ "sonic-rs",
  "tungstenite",
 ]
 

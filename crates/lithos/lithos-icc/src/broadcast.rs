@@ -129,12 +129,17 @@ impl<T: Copy> BroadcastWriter<T> {
     /// Multiple producers can open the same file (one `BroadcastWriter` per thread or
     /// process); each `publish()` atomically claims a unique slot via `write_seq`.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let mut mm = MmapFileMut::open_rw(path)?;  // need open_rw in lithos_mmap
+        let mut mm = MmapFileMut::open_rw(path)?; // need open_rw in lithos_mmap
         let base = mm.as_mut_ptr();
         let h = unsafe { &*(base as *const RingHeader) };
         let _ = h.validate::<T>();
         let cap = h.capacity;
-        Ok(Self { _mm: mm, base, mask: cap - 1, _pd: PhantomData })
+        Ok(Self {
+            _mm: mm,
+            base,
+            mask: cap - 1,
+            _pd: PhantomData,
+        })
     }
 
     /// Returns a reference to the ring header.

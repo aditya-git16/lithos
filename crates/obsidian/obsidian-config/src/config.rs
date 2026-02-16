@@ -12,10 +12,15 @@ pub struct ObsidianConfig {
     pub shm_file_path: String,
     #[serde(default = "defaults::log_level")]
     pub log_level: String,
-    #[serde(default = "defaults::binance_ws_url")]
-    pub binance_ws_url: String,
     #[serde(default = "defaults::capacity")]
     pub capacity: usize,
+    pub connections: Vec<ConnectionConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ConnectionConfig {
+    pub url: String,
+    pub symbol_id: u16,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,10 +43,6 @@ mod defaults {
 
     pub fn log_level() -> String {
         "info".into()
-    }
-
-    pub fn binance_ws_url() -> String {
-        "wss://stream.binance.com:9443/ws/btcusdt@bookTicker".into()
     }
 
     pub fn capacity() -> usize {

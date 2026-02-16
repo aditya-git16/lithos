@@ -2,6 +2,12 @@ shm_file_path = "/tmp/lithos_md_bus"
 
 log_level = "debug"
 
-binance_ws_url = "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
-
 capacity = 65536
+
+[[connections]]
+url = "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
+symbol_id = 1
+
+[[connections]]
+url = "wss://stream.binance.com:9443/ws/ethusdt@bookTicker"
+symbol_id = 2
