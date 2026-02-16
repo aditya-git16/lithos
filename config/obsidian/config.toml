@@ -4,4 +4,4 @@ log_level = "debug"
 
 binance_ws_url = "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
 
-capacity = "1 << 16"
+capacity = 65536

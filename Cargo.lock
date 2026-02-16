@@ -385,12 +385,22 @@ version = "0.1.0"
 dependencies = [
  "lithos-events",
  "lithos-icc",
+ "obsidian-config",
  "obsidian-core",
  "obsidian-util",
  "sonic-rs",
  "tracing",
  "tracing-subscriber",
  "tungstenite",
+]
+
+[[package]]
+name = "obsidian-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]
