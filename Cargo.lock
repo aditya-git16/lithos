@@ -411,6 +411,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "obsidian-engine"
+version = "0.1.0"
+dependencies = [
+ "lithos-events",
+ "lithos-icc",
+ "obsidian-core",
+]
+
+[[package]]
 name = "obsidian-util"
 version = "0.1.0"
 
