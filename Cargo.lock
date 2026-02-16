@@ -385,8 +385,8 @@ version = "0.1.0"
 dependencies = [
  "lithos-events",
  "lithos-icc",
+ "obsidian-core",
  "obsidian-util",
- "serde",
  "sonic-rs",
  "tracing",
  "tracing-subscriber",
@@ -396,6 +396,9 @@ dependencies = [
 [[package]]
 name = "obsidian-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "obsidian-util"
