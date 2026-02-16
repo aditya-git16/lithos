@@ -1,10 +1,10 @@
 use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::{BroadcastWriter, RingConfig};
-use obsidian_util::timestamp::now_ns;
 use obsidian_core::dto::BinanceDto;
+use obsidian_util::timestamp::now_ns;
 use tracing::info;
-use tungstenite::{Message, connect};
 use tracing_subscriber::EnvFilter;
+use tungstenite::{Message, connect};
 
 fn main() {
     let path = "/tmp/lithos_md_bus";
@@ -12,7 +12,8 @@ fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_|EnvFilter::new("INFO")))
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("INFO")),
+        )
         .init();
 
     let mut bus = BroadcastWriter::<TopOfBook>::create(path, RingConfig::new(capacity))
@@ -29,7 +30,9 @@ fn main() {
 
         match data {
             Message::Text(text) => {
-                let dto: BinanceDto = unsafe {sonic_rs::from_slice_unchecked(text.as_ref()).expect("unable to parse")};
+                let dto: BinanceDto = unsafe {
+                    sonic_rs::from_slice_unchecked(text.as_ref()).expect("unable to parse")
+                };
 
                 let tob = TopOfBook {
                     ts_event_ns: now_ns(),
@@ -114,8 +117,8 @@ fn parse_fixed_dp<const DP: u32>(s: &str) -> i64 {
     let mut sign = 1i64;
     // Check if first character is a minus sign
     if i < b.len() && b[i] == b'-' {
-        sign = -1;  // Set sign to negative
-        i += 1;      // Advance past the minus sign
+        sign = -1; // Set sign to negative
+        i += 1; // Advance past the minus sign
     }
 
     // 2: Parse integer part (digits before the decimal point)
@@ -123,17 +126,17 @@ fn parse_fixed_dp<const DP: u32>(s: &str) -> i64 {
     let mut int_part = 0i64;
     // Loop through characters until we hit the decimal point or end of string
     while i < b.len() {
-        let c = b[i];  // Get current byte/character
+        let c = b[i]; // Get current byte/character
         // If we encounter a decimal point, we've finished the integer part
         if c == b'.' {
-            i += 1;    // Advance past the decimal point
-            break;     // Exit the integer parsing loop
+            i += 1; // Advance past the decimal point
+            break; // Exit the integer parsing loop
         }
         // Convert ASCII digit to integer value and accumulate
         // '0' = 48 in ASCII, so (c - b'0') converts '0'..'9' to 0..9
         // Multiply existing value by 10 and add new digit (standard base-10 parsing)
         int_part = int_part * 10 + (c - b'0') as i64;
-        i += 1;        // Move to next character
+        i += 1; // Move to next character
     }
 
     // 3: Parse fractional part (digits after the decimal point)
@@ -143,23 +146,23 @@ fn parse_fixed_dp<const DP: u32>(s: &str) -> i64 {
     let mut got = 0u32;
     // Loop through remaining characters, but only parse up to DP digits
     while i < b.len() && got < DP {
-        let c = b[i];  // Get current byte/character
+        let c = b[i]; // Get current byte/character
         // If we hit a non-digit character, stop parsing (e.g., trailing whitespace)
         if c < b'0' || c > b'9' {
-            break;     // Exit fractional parsing loop
+            break; // Exit fractional parsing loop
         }
         // Convert ASCII digit to integer and accumulate (same as integer part)
         frac = frac * 10 + (c - b'0') as i64;
-        got += 1;      // Increment count of parsed fractional digits
-        i += 1;        // Move to next character
+        got += 1; // Increment count of parsed fractional digits
+        i += 1; // Move to next character
     }
 
     // 4: Pad fractional part with zeros if we didn't get enough digits
     // This ensures we always have exactly DP fractional digits
     // Example: "12.3" with DP=3 becomes "12.300" -> frac = 300
     while got < DP {
-        frac *= 10;    // Multiply by 10 to shift left (equivalent to adding a zero)
-        got += 1;      // Increment count to track padding
+        frac *= 10; // Multiply by 10 to shift left (equivalent to adding a zero)
+        got += 1; // Increment count to track padding
     }
 
     // 5: Combine integer and fractional parts into final fixed-point integer

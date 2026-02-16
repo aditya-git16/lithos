@@ -1,8 +1,8 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub struct BinanceDto <'a> {
-    pub u: u64,    // order book updateId
+pub struct BinanceDto<'a> {
+    pub u: u64,     // order book updateId
     pub s: &'a str, // symbol
     pub b: &'a str, // best bid price
     #[serde(rename = "B")]
