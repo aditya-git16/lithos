@@ -1,4 +1,4 @@
-use lithos_events::TopOfBook;
+use lithos_events::{TopOfBook, SymbolId};
 use lithos_icc::{BroadcastWriter, RingConfig};
 use obsidian_config::config::ObsidianConfig;
 use obsidian_engine::ObsidianEngine;
@@ -24,11 +24,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         capacity = config.capacity
     );
 
-    for conn in config.connections {
+    for connection in config.connections {
         let path = config.shm_file_path.clone();
         std::thread::spawn(move || {
             let mut engine =
-                ObsidianEngine::new(&path, conn).expect("Unable to initialise ObsidianEngine");
+                ObsidianEngine::new(&path, &connection, SymbolId(connection.symbol_id)).expect("Unable to initialise ObsidianEngine");
             engine.run();
         });
     }

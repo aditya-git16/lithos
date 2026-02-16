@@ -18,13 +18,13 @@ pub struct ObsidianEngine {
 }
 
 impl ObsidianEngine {
-    pub fn new<P: AsRef<Path>>(path: P, connection: ConnectionConfig) -> std::io::Result<Self> {
-        let (socket, _resposne) = connect(connection.url).expect("failed to connect");
+    pub fn new<P: AsRef<Path>>(path: P, connection: &ConnectionConfig, symbol_id: SymbolId) -> std::io::Result<Self> {
+        let (socket, _resposne) = connect(&connection.url).expect("failed to connect");
         let writer = BroadcastWriter::<Event>::open(path)?;
         Ok(ObsidianEngine {
             socket: socket,
             writer: writer,
-            symbol_id: SymbolId(1),
+            symbol_id: symbol_id,
         })
     }
 
@@ -40,7 +40,7 @@ impl ObsidianEngine {
 
                     let tob = TopOfBook {
                         ts_event_ns: now_ns(),
-                        symbol_id: SymbolId(1),
+                        symbol_id: self.symbol_id,
                         bid_px_ticks: parse_px_2dp(&dto.b),
                         bid_qty_lots: parse_qty_3dp(&dto.b_qty),
                         ask_px_ticks: parse_px_2dp(&dto.a),
