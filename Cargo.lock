@@ -420,6 +420,9 @@ dependencies = [
 [[package]]
 name = "obsidian-util"
 version = "0.1.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "once_cell"
