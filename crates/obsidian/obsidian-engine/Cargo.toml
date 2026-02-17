@@ -9,6 +9,6 @@ lithos-icc = { path = "../../lithos/lithos-icc"}
 obsidian-core ={ path = "../obsidian-core"}
 obsidian-config = {path = "../obsidian-config"}
 obsidian-util = {path = "../obsidian-util"}
-tungstenite = {version = "0.28.0" , features = ["native-tls" , "rustls"]}
+tungstenite = {version = "0.28.0" , features = ["rustls"]}
 sonic-rs = "0.5.6"
 tracing = {workspace = true}

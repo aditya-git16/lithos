@@ -5,11 +5,13 @@ use obsidian_core::dto::BinanceDto;
 use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
 use obsidian_util::timestamp::now_ns;
 use sonic_rs::from_slice_unchecked;
+use std::io;
 use std::net::TcpStream;
 use std::path::Path;
 #[cfg(debug_assertions)]
 use tracing::debug;
-use tungstenite::stream::MaybeTlsStream;
+use tracing::warn;
+use tungstenite::stream::{MaybeTlsStream, NoDelay};
 use tungstenite::{Message, WebSocket, connect};
 
 pub type WebsocketStream = WebSocket<MaybeTlsStream<TcpStream>>;
@@ -26,23 +28,41 @@ impl ObsidianEngine {
         connection: &ConnectionConfig,
         symbol_id: SymbolId,
     ) -> std::io::Result<Self> {
-        let (socket, _resposne) = connect(&connection.url).expect("failed to connect");
+        let (mut socket, _response) =
+            connect(&connection.url).map_err(|e| io::Error::other(format!("connect failed: {e}")))?;
+        // Set TCP_NODELAY to true to disable Nagle's algorithm.
+        // This instructs the OS to send small packets immediately rather than buffering them,
+        // reducing latency at the cost of possibly increasing network overhead.
+        if let Err(e) = socket.get_mut().set_nodelay(true) {
+            warn!(?e, "failed to set TCP_NODELAY");
+        }
         let writer = BroadcastWriter::<TopOfBook>::open(path)?;
         Ok(ObsidianEngine {
-            socket: socket,
-            writer: writer,
-            symbol_id: symbol_id,
+            socket,
+            writer,
+            symbol_id,
         })
     }
 
     pub fn run(&mut self) {
         loop {
-            let data = self.socket.read().expect("unable to read data");
+            let data = match self.socket.read() {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!(?e, "socket read failed; stopping obsidian engine loop");
+                    break;
+                }
+            };
 
             match data {
                 Message::Text(text) => {
-                    let dto: BinanceDto =
-                        unsafe { from_slice_unchecked(text.as_ref()).expect("unable to parse") };
+                    let dto: BinanceDto = match unsafe { from_slice_unchecked(text.as_ref()) } {
+                        Ok(dto) => dto,
+                        Err(e) => {
+                            warn!(?e, "unable to parse websocket payload");
+                            continue;
+                        }
+                    };
 
                     let tob = TopOfBook {
                         ts_event_ns: now_ns(),
