@@ -99,13 +99,12 @@ impl<T: Copy> BroadcastWriter<T> {
             let h = base as *mut RingHeader;
             ptr::write(
                 h,
-                RingHeader {
-                    magic: RING_MAGIC,
-                    version: RING_VERSION,
-                    capacity: cfg.capacity as u64,
-                    elem_size: size_of::<T>() as u64,
-                    write_seq: std::sync::atomic::AtomicU64::new(0),
-                },
+                RingHeader::new(
+                    RING_MAGIC,
+                    RING_VERSION,
+                    cfg.capacity as u64,
+                    size_of::<T>() as u64,
+                ),
             );
 
             // Initialize each slot's seqlock to a consistent initial state

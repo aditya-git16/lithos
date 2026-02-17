@@ -72,9 +72,24 @@ pub struct RingHeader {
     /// Monotonically increasing count of published items.
     /// Writers increment this atomically; readers use it to detect new data.
     pub write_seq: AtomicU64,
+
+    _pad: [u8; 24],
 }
 
 impl RingHeader {
+    /// Constructs a new header for ring creation. Callers must set `write_seq` via
+    /// the returned header; this only initializes the static fields and padding.
+    pub fn new(magic: u64, version: u64, capacity: u64, elem_size: u64) -> Self {
+        Self {
+            magic,
+            version,
+            capacity,
+            elem_size,
+            write_seq: AtomicU64::new(0),
+            _pad: [0; 24],
+        }
+    }
+
     /// Validates the header against expected values.
     ///
     /// This should be called when opening an existing ring buffer to ensure:

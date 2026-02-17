@@ -44,6 +44,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 ///
 /// - **Even**: Data is stable, safe to read
 /// - **Odd**: Write in progress, readers must wait
+#[repr(C, align(64))]
 pub struct SeqlockSlot<T: Copy> {
     /// Sequence counter: odd = write in progress, even = stable.
     seq: AtomicU64,
