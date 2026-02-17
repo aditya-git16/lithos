@@ -252,6 +252,20 @@ impl<T: Copy> BroadcastReader<T> {
         unsafe { &*self.slots_base.add(idx as usize) }
     }
 
+    /// Best-effort prefetch of the next slot likely to be read.
+    ///
+    /// This is an optimization hint only. It has no semantic effect and may be
+    /// ignored by the CPU/OS. On non-x86 architectures this is a no-op.
+    #[inline(always)]
+    pub fn prefetch_next(&self) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            let next_idx = seq_to_index(self.read_seq, self.mask);
+            let slot_ptr = self.slots_base.add(next_idx as usize) as *const i8;
+            core::arch::x86_64::_mm_prefetch(slot_ptr, core::arch::x86_64::_MM_HINT_T0);
+        }
+    }
+
     /// Attempts to read the next item from the ring buffer.
     ///
     /// This is a non-blocking operation that returns immediately.
