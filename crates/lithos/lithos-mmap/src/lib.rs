@@ -1,4 +1,4 @@
-use memmap2::{Mmap, MmapMut};
+use memmap2::{Advice, Mmap, MmapMut, MmapOptions};
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -30,7 +30,7 @@ impl MmapFileMut {
             .open(path)?;
         file.set_len(size_bytes as u64)?;
 
-        let mmap = unsafe { MmapMut::map_mut(&file)? };
+        let mmap = map_mut_with_writer_hints(&file)?;
         Ok(Self { _file: file, mmap })
     }
 
@@ -38,7 +38,7 @@ impl MmapFileMut {
     pub fn open_rw<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
-        let mmap = unsafe { MmapMut::map_mut(&file)? };
+        let mmap = map_mut_with_writer_hints(&file)?;
 
         Ok(Self { _file: file, mmap })
     }
@@ -59,7 +59,7 @@ impl MmapFile {
     /// Open an existing file and map it read-only.
     pub fn open_ro<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).open(path)?;
-        let mmap = unsafe { Mmap::map(&file)? };
+        let mmap = map_ro_with_reader_hints(&file)?;
         Ok(Self { _file: file, mmap })
     }
 
@@ -72,6 +72,38 @@ impl MmapFile {
     pub fn len(&self) -> usize {
         self.mmap.len()
     }
+}
+
+fn map_mut_with_writer_hints(file: &File) -> io::Result<MmapMut> {
+    #[cfg(target_os = "linux")]
+    let mut opts = MmapOptions::new();
+    #[cfg(not(target_os = "linux"))]
+    let opts = MmapOptions::new();
+    #[cfg(target_os = "linux")]
+    opts.populate();
+
+    let mmap = unsafe { opts.map_mut(file)? };
+    // Writer access pattern is random in a ring buffer due to wrap-around.
+    let _ = mmap.advise(Advice::Random);
+    #[cfg(target_os = "linux")]
+    let _ = mmap.advise(Advice::HugePage);
+    Ok(mmap)
+}
+
+fn map_ro_with_reader_hints(file: &File) -> io::Result<Mmap> {
+    #[cfg(target_os = "linux")]
+    let mut opts = MmapOptions::new();
+    #[cfg(not(target_os = "linux"))]
+    let opts = MmapOptions::new();
+    #[cfg(target_os = "linux")]
+    opts.populate();
+
+    let mmap = unsafe { opts.map(file)? };
+    // Reader pattern is mostly forward/sequential during catch-up and steady polling.
+    let _ = mmap.advise(Advice::Sequential);
+    #[cfg(target_os = "linux")]
+    let _ = mmap.advise(Advice::HugePage);
+    Ok(mmap)
 }
 
 #[cfg(test)]
