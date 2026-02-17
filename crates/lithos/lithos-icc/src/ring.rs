@@ -117,10 +117,14 @@ pub fn seq_to_index(seq: u64, mask: u64) -> u64 {
 /// - `read_seq`: Reader's current position (mutated if overrun detected)
 /// - `capacity`: Ring buffer capacity
 /// - `overruns`: Counter for lost messages (mutated to track total overruns)
+///
+/// # Caller Contract
+/// The caller must ensure `write_seq > *read_seq` before calling this function.
+/// This function is intended to run only when there is unread data.
 #[inline(always)]
 pub fn apply_overrun_policy(write_seq: u64, read_seq: &mut u64, capacity: u64, overruns: &mut u64) {
-    // saturating_sub prevents underflow if read_seq somehow exceeds write_seq
-    let behind = write_seq.saturating_sub(*read_seq);
+    debug_assert!(write_seq > *read_seq);
+    let behind = write_seq - *read_seq;
     if behind > capacity {
         // Track how many messages were lost
         *overruns += behind - capacity;

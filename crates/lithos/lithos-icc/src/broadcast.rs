@@ -269,12 +269,14 @@ impl<T: Copy> BroadcastReader<T> {
         // Acquire ordering ensures we see the most recent write_seq
         let w = self.header().write_seq.load(Ordering::Acquire);
 
-        // Adjust read_seq if we've fallen behind (overrun detection/recovery)
-        apply_overrun_policy(w, &mut self.read_seq, self.capacity, &mut self.overruns);
-
         // No new data available
         if self.read_seq >= w {
             return None;
+        }
+
+        // Overruns are rare: only run recovery logic when the reader is clearly behind.
+        if w - self.read_seq > self.capacity {
+            apply_overrun_policy(w, &mut self.read_seq, self.capacity, &mut self.overruns);
         }
 
         // Read from the slot corresponding to our current sequence number
