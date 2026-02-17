@@ -56,6 +56,7 @@ impl OnyxEngine {
         while let Some(event) = self.reader.try_read() {
             // then we process the event (process as in using that event to calculate state , using state + event)
             self.process_event(&event);
+            core::hint::spin_loop()
         }
     }
 
