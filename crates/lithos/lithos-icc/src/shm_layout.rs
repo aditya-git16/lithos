@@ -7,13 +7,11 @@
 //!
 //! # Memory Layout
 //!
+//! Header fits in one cache line (64 bytes) so it does not share a line with slot[0].
+//!
 //! ```text
 //! ┌────────────────────────────────────────────────────────────────┐
-//! │                        RingHeader                              │
-//! │  ┌──────────┬──────────┬──────────┬──────────┬──────────────┐  │
-//! │  │  magic   │ version  │ capacity │ elem_size│  write_seq   │  │
-//! │  │  (8B)    │  (8B)    │  (8B)    │  (8B)    │  (8B atomic) │  │
-//! │  └──────────┴──────────┴──────────┴──────────┴──────────────┘  │
+//! │  magic │ version │ capacity │ elem_size │ write_seq │   pad    │  (64 B)
 //! ├────────────────────────────────────────────────────────────────┤
 //! │                     SeqlockSlot[0]                             │
 //! │  ┌──────────────────┬─────────────────────────────────────┐    │
@@ -45,7 +43,7 @@ pub const RING_MAGIC: u64 = 0x4C49_5448_4F53_4255;
 ///
 /// Increment this when making incompatible changes to the layout.
 /// Readers will reject files with mismatched versions.
-pub const RING_VERSION: u64 = 1;
+pub const RING_VERSION: u64 = 3;
 
 /// Header structure at the start of every ring buffer.
 ///
@@ -53,8 +51,8 @@ pub const RING_VERSION: u64 = 1;
 /// all metadata needed for readers to validate and navigate the ring buffer.
 ///
 /// # Representation
-/// Uses `#[repr(C)]` to ensure predictable field ordering and alignment,
-/// which is critical for cross-process memory-mapped access.
+/// Uses `#[repr(C)]` to ensure predictable field ordering and alignment.
+/// Fits in one cache line (64 bytes) so the header never false-shares with slot[0].
 #[repr(C)]
 pub struct RingHeader {
     /// Magic number for file type identification. Must equal `RING_MAGIC`.
@@ -73,6 +71,7 @@ pub struct RingHeader {
     /// Writers increment this atomically; readers use it to detect new data.
     pub write_seq: AtomicU64,
 
+    /// Padding to end of first cache line (64 bytes). Header and slot[0] stay on separate lines.
     _pad: [u8; 24],
 }
 
