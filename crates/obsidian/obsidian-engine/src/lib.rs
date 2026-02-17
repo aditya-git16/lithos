@@ -74,7 +74,10 @@ impl ObsidianEngine {
                     };
                     self.writer.publish(tob);
                     #[cfg(debug_assertions)]
-                    debug!("market_state[{}]: {:?}", tob.symbol_id.0, tob);
+                    {
+                        let symbol_id = tob.symbol_id.0;
+                        debug!("market_state[{}]: {:?}", symbol_id, tob);
+                    }
                 }
                 Message::Ping(payload) => {
                     self.socket.write(Message::Pong(payload)).ok();

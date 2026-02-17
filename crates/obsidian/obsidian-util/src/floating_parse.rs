@@ -52,70 +52,57 @@ fn pow10<const DP: u32>() -> i64 {
 ///   - result = 1 * (12 * 1000 + 300) = 12300
 #[inline(always)]
 pub fn parse_fixed_dp<const DP: u32>(s: &str) -> i64 {
-    // Convert string to byte slice for efficient character-by-character parsing
     let b = s.as_bytes();
-    // Current position/index in the byte slice
-    let mut i = 0usize;
+    let len = b.len();
+    let mut start = 0usize;
 
-    // 1: Handle optional negative sign
-    // Initialize sign to positive (1)
     let mut sign = 1i64;
-    // Check if first character is a minus sign
-    if i < b.len() && b[i] == b'-' {
-        sign = -1; // Set sign to negative
-        i += 1; // Advance past the minus sign
+    if start < len && b[start] == b'-' {
+        sign = -1;
+        start += 1;
     }
 
-    // 2: Parse integer part (digits before the decimal point)
-    // Accumulate integer digits into int_part
+    let dot_idx = unsafe {
+        let found = libc::memchr(
+            b.as_ptr().add(start) as *const libc::c_void,
+            b'.' as i32,
+            len - start,
+        );
+        if found.is_null() {
+            len
+        } else {
+            (found as *const u8).offset_from(b.as_ptr()) as usize
+        }
+    };
+
     let mut int_part = 0i64;
-    // Loop through characters until we hit the decimal point or end of string
-    while i < b.len() {
-        let c = b[i]; // Get current byte/character
-        // If we encounter a decimal point, we've finished the integer part
-        if c == b'.' {
-            i += 1; // Advance past the decimal point
-            break; // Exit the integer parsing loop
-        }
-        // Convert ASCII digit to integer value and accumulate
-        // '0' = 48 in ASCII, so (c - b'0') converts '0'..'9' to 0..9
-        // Multiply existing value by 10 and add new digit (standard base-10 parsing)
+    let mut i = start;
+    while i < dot_idx {
+        let c = unsafe { *b.get_unchecked(i) };
         int_part = int_part * 10 + (c - b'0') as i64;
-        i += 1; // Move to next character
+        i += 1;
     }
 
-    // 3: Parse fractional part (digits after the decimal point)
-    // Accumulate fractional digits into frac
+    let frac_start = if dot_idx < len { dot_idx + 1 } else { len };
+    let frac_end = (frac_start + DP as usize).min(len);
+
     let mut frac = 0i64;
-    // Track how many fractional digits we've actually parsed
     let mut got = 0u32;
-    // Loop through remaining characters, but only parse up to DP digits
-    while i < b.len() && got < DP {
-        let c = b[i]; // Get current byte/character
-        // If we hit a non-digit character, stop parsing (e.g., trailing whitespace)
+    i = frac_start;
+    while i < frac_end {
+        let c = unsafe { *b.get_unchecked(i) };
         if c < b'0' || c > b'9' {
-            break; // Exit fractional parsing loop
+            break;
         }
-        // Convert ASCII digit to integer and accumulate (same as integer part)
         frac = frac * 10 + (c - b'0') as i64;
-        got += 1; // Increment count of parsed fractional digits
-        i += 1; // Move to next character
+        got += 1;
+        i += 1;
     }
 
-    // 4: Pad fractional part with zeros if we didn't get enough digits
-    // This ensures we always have exactly DP fractional digits
-    // Example: "12.3" with DP=3 becomes "12.300" -> frac = 300
     while got < DP {
-        frac *= 10; // Multiply by 10 to shift left (equivalent to adding a zero)
-        got += 1; // Increment count to track padding
+        frac *= 10;
+        got += 1;
     }
 
-    // 5: Combine integer and fractional parts into final fixed-point integer
-    // Formula: sign * (int_part * 10^DP + frac)
-    // - int_part * pow10::<DP>() shifts integer part left by DP places
-    // - Adding frac gives us the complete fixed-point representation
-    // - Multiplying by sign handles negative numbers
-    // Example: "123.45" with DP=2 -> sign=1, int_part=123, frac=45
-    //          Result = 1 * (123 * 100 + 45) = 12345
     sign * (int_part * pow10::<DP>() + frac)
 }

@@ -9,7 +9,7 @@ pub struct SymbolId(pub u16);
 
 // Defining a minimal market struct ( for for initial setup and testing purposes)
 // POD -> Plain old data , fixed-size
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TopOfBook {
     pub ts_event_ns: u64,
@@ -46,8 +46,8 @@ mod tests {
     ///   3. Consistent memory layout across different architectures
     #[test]
     fn tob_is_small_and_aligned() {
-        assert!(size_of::<TopOfBook>() <= 64, "TopOfBook too large");
-        assert!(align_of::<TopOfBook>() <= 8, "Unexpected alignment");
+        assert_eq!(size_of::<TopOfBook>(), 42, "TopOfBook layout changed");
+        assert_eq!(align_of::<TopOfBook>(), 1, "TopOfBook should be packed");
     }
 
     /// Tests that SymbolId has the expected size of 2 bytes (u16).
