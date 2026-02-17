@@ -6,10 +6,7 @@ edition = "2024"
 [dependencies]
 lithos-events = {path = "../../crates/lithos/lithos-events"}
 lithos-icc = {path = "../../crates/lithos/lithos-icc"}
-obsidian-util = {path = "../../crates/obsidian/obsidian-util"}
-obsidian-core = {path = "../../crates/obsidian/obsidian-core"}
 obsidian-config ={ path = "../../crates/obsidian/obsidian-config"}
 obsidian-engine = {path = "../../crates/obsidian/obsidian-engine"}
-tungstenite = {version = "0.28.0" , features = ["native-tls" , "rustls"]}
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }

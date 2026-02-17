@@ -1,9 +1,7 @@
 use onyx_config::OnyxConfig;
 use onyx_engine::OnyxEngine;
+use tracing::info;
 use tracing_subscriber::EnvFilter;
-
-// it would be better if the config is read from a file
-// for starting i can think of path and log level ?
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = "/Users/adityaanand/dev/lithos/config/onyx/config.toml";
@@ -15,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    tracing::info!(?config, "onyx starting");
+    info!(?config, "onyx starting");
 
     let mut onyx_engine =
         OnyxEngine::new(config.shm_file_path).expect("failed to start onyx engine");

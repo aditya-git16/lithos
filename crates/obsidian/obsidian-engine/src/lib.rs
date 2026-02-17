@@ -4,6 +4,7 @@ use obsidian_config::config::ConnectionConfig;
 use obsidian_core::dto::BinanceDto;
 use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
 use obsidian_util::timestamp::now_ns;
+use sonic_rs::from_slice_unchecked;
 use std::net::TcpStream;
 use std::path::Path;
 use tracing::debug;
@@ -39,9 +40,8 @@ impl ObsidianEngine {
 
             match data {
                 Message::Text(text) => {
-                    let dto: BinanceDto = unsafe {
-                        sonic_rs::from_slice_unchecked(text.as_ref()).expect("unable to parse")
-                    };
+                    let dto: BinanceDto =
+                        unsafe { from_slice_unchecked(text.as_ref()).expect("unable to parse") };
 
                     let tob = TopOfBook {
                         ts_event_ns: now_ns(),

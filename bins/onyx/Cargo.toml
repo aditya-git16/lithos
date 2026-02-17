@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-lithos-events = {path = "../../crates/lithos/lithos-events"}
 onyx-engine = {path = "../../crates/onyx/onyx-engine"}
 onyx-config = {path = "../../crates/onyx/onyx-config"}
 tracing-subscriber = { workspace = true }
