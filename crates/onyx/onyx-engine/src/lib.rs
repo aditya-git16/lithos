@@ -1,14 +1,5 @@
-// Setup the main onyx engine
-// It has the following functions
-// 1. Read values from shared memory
-// 2. Read values form current state ?
-// 3. Perform calculations using both both values
-// 4. Update market state
-//
-// We also have multiple markets so we need to need to define a data struct which holds
-// the symbol id and market state map , (e.g something like a hashmap)
 
-use lithos_events::Event;
+use lithos_events::TopOfBook;
 use lithos_icc::BroadcastReader;
 use onyx_core::MarketStateManager;
 use std::path::Path;
@@ -20,9 +11,8 @@ pub struct OnyxEngine {
 
     // A reader from shared memory ?
     // To read events , we have already defined a broadcast reader so we can use that
-    // we replace the generic with Event enum , this is the type we want to read
-    // or more specifically a variant of this type
-    pub reader: BroadcastReader<Event>,
+    // we replace the generic with TopOfBook as this is the type we publish.
+    pub reader: BroadcastReader<TopOfBook>,
 }
 
 // Implement the functionality of the engine
@@ -32,7 +22,7 @@ impl OnyxEngine {
     pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let market_state_manager = MarketStateManager::new();
         // this part can be abstracted ?
-        let reader = BroadcastReader::<Event>::open(path)?;
+        let reader = BroadcastReader::<TopOfBook>::open(path)?;
         Ok(OnyxEngine {
             market_state_manager,
             reader,
@@ -61,14 +51,7 @@ impl OnyxEngine {
     }
 
     #[inline]
-    fn process_event(&mut self, event: &Event) {
-        // we use the event here to perform calculations and update state
-        // in the start the event will be tob but we will it as the generic T
-        // so we match the event the event with its type and then process accordingly
-        match event {
-            Event::TopOfBook(tob) => {
-                self.market_state_manager.update_market_state_tob(tob);
-            }
-        }
+    fn process_event(&mut self, event: &TopOfBook) {
+        self.market_state_manager.update_market_state_tob(event);
     }
 }

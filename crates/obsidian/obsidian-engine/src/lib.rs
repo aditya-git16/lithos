@@ -1,4 +1,4 @@
-use lithos_events::{Event, SymbolId, TopOfBook};
+use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::BroadcastWriter;
 use obsidian_config::config::ConnectionConfig;
 use obsidian_core::dto::BinanceDto;
@@ -15,7 +15,7 @@ pub type WebsocketStream = WebSocket<MaybeTlsStream<TcpStream>>;
 
 pub struct ObsidianEngine {
     pub socket: WebsocketStream,
-    pub writer: BroadcastWriter<Event>,
+    pub writer: BroadcastWriter<TopOfBook>,
     pub symbol_id: SymbolId,
 }
 
@@ -26,7 +26,7 @@ impl ObsidianEngine {
         symbol_id: SymbolId,
     ) -> std::io::Result<Self> {
         let (socket, _resposne) = connect(&connection.url).expect("failed to connect");
-        let writer = BroadcastWriter::<Event>::open(path)?;
+        let writer = BroadcastWriter::<TopOfBook>::open(path)?;
         Ok(ObsidianEngine {
             socket: socket,
             writer: writer,
@@ -51,7 +51,7 @@ impl ObsidianEngine {
                         ask_px_ticks: parse_px_2dp(&dto.a),
                         ask_qty_lots: parse_qty_3dp(&dto.a_qty),
                     };
-                    self.writer.publish(Event::TopOfBook(tob));
+                    self.writer.publish(tob);
                     debug!("market_state[{}]: {:?}", tob.symbol_id.0, tob);
                 }
                 Message::Ping(payload) => {
