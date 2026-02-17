@@ -120,8 +120,8 @@ fn main() {
 fn print_banner(cache: &CacheInfo) {
     let bar = "\u{2550}".repeat(90);
     println!("\n{bar}");
-    println!("  LITHOS REAL-PIPELINE PERFORMANCE REPORT");
-    println!("  (instrumented ObsidianProcessor + OnyxEngine)");
+    println!("  LITHOS PERFORMANCE REPORT");
+    println!("  (instrumented Obsidian + Onyx)");
     println!("{bar}\n");
 
     let os = run_cmd("uname", &["-srm"]).unwrap_or_else(|| "unknown".into());
@@ -258,7 +258,7 @@ fn section_clock(results: &mut Vec<BenchResult>) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn section_obsidian_stages(results: &mut Vec<BenchResult>) {
-    section_header("OBSIDIAN PER-STAGE TIMING (real ObsidianProcessor)");
+    section_header("OBSIDIAN PER-STAGE TIMING");
 
     let corpus_size = 100_000;
     let corpus = generate_replay_corpus(corpus_size);
@@ -295,7 +295,7 @@ fn section_obsidian_stages(results: &mut Vec<BenchResult>) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn section_onyx_stages(results: &mut Vec<BenchResult>) {
-    section_header("ONYX PER-STAGE TIMING (real OnyxEngine)");
+    section_header("ONYX PER-STAGE TIMING");
 
     let event_count = 100_000;
     let corpus = generate_replay_corpus(event_count);
@@ -350,9 +350,9 @@ fn section_cross_thread(
     out_stats: &mut Option<Stats>,
     out_overruns: &mut u64,
 ) {
-    section_header("CROSS-THREAD PIPELINE (ObsidianProcessor -> shm -> OnyxEngine)");
-    println!("  Publisher: real ObsidianProcessor.process_text()");
-    println!("  Consumer: real OnyxEngine.poll_events()");
+    section_header("CROSS-THREAD PIPELINE (Obsidian -> shm -> Onyx)");
+    println!("  Publisher: Obsidian.process_text()");
+    println!("  Consumer: Onyx.poll_events()");
     println!("  Latency = consumer_ts - event.ts_event_ns\n");
 
     let shm = temp_shm_path("xthread_real");
@@ -450,7 +450,7 @@ fn section_cross_thread(
     *out_overruns = overruns;
 
     let r = BenchResult {
-        name: "real pipeline e2e".into(),
+        name: "pipeline e2e".into(),
         unit: "ns".into(),
         stats,
     };
@@ -470,7 +470,7 @@ fn section_soak(
     windows: &mut Vec<serde_json::Value>,
     out_stats: &mut Option<Stats>,
 ) {
-    section_header("SOAK TEST (5s sustained, real ObsidianProcessor + OnyxEngine reader)");
+    section_header("SOAK TEST (5s sustained, Obsidian + Onyx)");
 
     let shm = temp_shm_path("soak_real");
     BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
@@ -626,7 +626,7 @@ fn section_final_analysis(results: &[BenchResult], cache: &CacheInfo) {
             idx += 1;
         }
         println!(
-            "  {}. Obsidian process_text() p50={} ns, p99={} ns, max={} ns",
+            "  {}. Obsidian p50={} ns, p99={} ns, max={} ns",
             idx, obs.stats.p50, obs.stats.p99, obs.stats.max
         );
         idx += 1;
@@ -634,13 +634,13 @@ fn section_final_analysis(results: &[BenchResult], cache: &CacheInfo) {
 
     if let Some(onyx) = find("OnyxTotal") {
         println!(
-            "  {}. Onyx poll_events() per-event p50={} ns, p99={} ns",
+            "  {}. Onyx per-event p50={} ns, p99={} ns",
             idx, onyx.stats.p50, onyx.stats.p99
         );
         idx += 1;
     }
 
-    if let Some(e2e) = find("real pipeline e2e") {
+    if let Some(e2e) = find("pipeline e2e") {
         println!(
             "  {}. Cross-thread e2e p50={} ns, p99={} ns, max={} ns",
             idx, e2e.stats.p50, e2e.stats.p99, e2e.stats.max
@@ -702,7 +702,7 @@ fn save_results(
     let json_path = format!("{results_dir}/{timestamp}_report.json");
 
     let output = serde_json::json!({
-        "report_type": "real_pipeline",
+        "report_type": "pipeline",
         "timestamp": timestamp,
         "system": cache,
         "stage_benchmarks": results,

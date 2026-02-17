@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate professional HFT-style plots from Lithos perf reports."""
+"""Generate professional HFT-style latency charts from Lithos perf reports."""
 
 from __future__ import annotations
 
@@ -20,9 +20,83 @@ try:
     matplotlib.use("Agg")
     import matplotlib.colors as mcolors
     import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+    from matplotlib.patches import FancyBboxPatch
 except ImportError:
     print("Error: matplotlib is required. Install with: pip3 install matplotlib")
     sys.exit(1)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Theme: Dark terminal aesthetic (Bloomberg / trading desk)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BG = "#0D1117"
+BG_PANEL = "#161B22"
+FG = "#C9D1D9"
+FG_DIM = "#6E7681"
+FG_BRIGHT = "#F0F6FC"
+GRID = "#21262D"
+ACCENT_GREEN = "#3FB950"
+ACCENT_RED = "#F85149"
+ACCENT_BLUE = "#58A6FF"
+ACCENT_PURPLE = "#BC8CFF"
+ACCENT_ORANGE = "#D29922"
+ACCENT_CYAN = "#39D2C0"
+ACCENT_PINK = "#F778BA"
+ACCENT_YELLOW = "#E3B341"
+
+# Ordered palette for multi-series
+PALETTE = [ACCENT_BLUE, ACCENT_GREEN, ACCENT_RED, ACCENT_PURPLE, ACCENT_ORANGE, ACCENT_CYAN]
+
+# Percentile colors: cold → hot
+PCTL_COLORS = {
+    "p50": ACCENT_GREEN,
+    "p99": ACCENT_ORANGE,
+    "p99.9": ACCENT_RED,
+    "max": ACCENT_PINK,
+}
+
+
+def apply_style() -> None:
+    plt.rcParams.update(
+        {
+            "figure.facecolor": BG,
+            "axes.facecolor": BG_PANEL,
+            "axes.edgecolor": GRID,
+            "axes.grid": True,
+            "axes.grid.which": "major",
+            "grid.color": GRID,
+            "grid.alpha": 0.6,
+            "grid.linewidth": 0.5,
+            "grid.linestyle": "-",
+            "font.size": 10,
+            "font.family": "monospace",
+            "text.color": FG,
+            "axes.titlecolor": FG_BRIGHT,
+            "axes.labelcolor": FG,
+            "axes.titleweight": "bold",
+            "axes.titlesize": 12,
+            "axes.labelsize": 10,
+            "xtick.color": FG_DIM,
+            "ytick.color": FG_DIM,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "legend.facecolor": BG_PANEL,
+            "legend.edgecolor": GRID,
+            "legend.labelcolor": FG,
+            "legend.fontsize": 9,
+            "legend.framealpha": 0.9,
+            "savefig.bbox": "tight",
+            "savefig.dpi": 200,
+            "savefig.facecolor": BG,
+            "savefig.pad_inches": 0.3,
+        }
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLI
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,33 +114,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output directory for plots (default: <results-dir>/plots)",
     )
-    p.add_argument(
-        "--no-clean",
-        action="store_true",
-        help="Do not remove old plot files before writing new ones",
-    )
     return p.parse_args()
 
 
-def apply_style() -> None:
-    plt.rcParams.update(
-        {
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "axes.edgecolor": "#2B2B2B",
-            "axes.grid": True,
-            "grid.color": "#D0D7DE",
-            "grid.alpha": 0.5,
-            "grid.linestyle": "-",
-            "font.size": 10,
-            "font.family": "DejaVu Sans",
-            "axes.titleweight": "bold",
-            "axes.labelweight": "bold",
-            "legend.frameon": False,
-            "savefig.bbox": "tight",
-            "savefig.dpi": 170,
-        }
-    )
+# ═══════════════════════════════════════════════════════════════════════════════
+# Data extraction
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def find_latest_report(results_dir: Path) -> Path | None:
+    reports = sorted(results_dir.glob("*_report.json"))
+    return reports[-1] if reports else None
 
 
 def clean_output_dir(output_dir: Path) -> int:
@@ -79,11 +137,6 @@ def clean_output_dir(output_dir: Path) -> int:
             except OSError:
                 pass
     return removed
-
-
-def find_latest_report(results_dir: Path) -> Path | None:
-    reports = sorted(results_dir.glob("*_report.json"))
-    return reports[-1] if reports else None
 
 
 def to_int(v: object, default: int = 0) -> int:
@@ -148,10 +201,10 @@ def quantile_lookup(dist: dict, pct: float) -> int:
 
 def path_defs() -> list[tuple[str, str, str]]:
     return [
-        ("cross_thread.publish_to_state", "Cross-thread", "#C62828"),
-        ("process.publish_to_state", "Process boundary", "#1E3A8A"),
-        ("soak.sampled_latency", "Soak sampled", "#166534"),
-        ("live.ingest_to_state", "Live network", "#D97706"),
+        ("cross_thread.publish_to_state", "Cross-thread", ACCENT_BLUE),
+        ("process.publish_to_state", "Process boundary", ACCENT_GREEN),
+        ("soak.sampled_latency", "Soak sampled", ACCENT_ORANGE),
+        ("live.ingest_to_state", "Live network", ACCENT_RED),
     ]
 
 
@@ -159,13 +212,45 @@ def save(fig, output_dir: Path, name: str) -> None:
     out = output_dir / name
     fig.savefig(out)
     plt.close(fig)
-    print(f"  Saved: {out}")
+    print(f"  {name}")
+
+
+def format_ns(ns: int) -> str:
+    """Human-readable latency formatting."""
+    if ns >= 1_000_000:
+        return f"{ns / 1_000_000:.1f}ms"
+    if ns >= 1_000:
+        return f"{ns / 1_000:.1f}us"
+    return f"{ns}ns"
+
+
+def add_watermark(fig, text: str = "LITHOS PERF") -> None:
+    """Subtle bottom-right watermark."""
+    fig.text(
+        0.98,
+        0.02,
+        text,
+        transform=fig.transFigure,
+        fontsize=7,
+        color=FG_DIM,
+        alpha=0.4,
+        ha="right",
+        va="bottom",
+        family="monospace",
+        weight="bold",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 01: Path Snapshot (p50 / p99 / p99.9 comparison)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_path_snapshot(bench_map: dict[str, dict], output_dir: Path):
     names = [
         ("pipeline (batched)", "single"),
         ("publish->state_update", "thread"),
+        ("pipeline e2e", "thread"),
         ("process publish->state_update", "process"),
         ("live ingest->state_update", "live"),
     ]
@@ -188,19 +273,41 @@ def plot_path_snapshot(bench_map: dict[str, dict], output_dir: Path):
     if not labels:
         return
 
-    fig, ax = plt.subplots(figsize=(8.8, 4.6))
+    fig, ax = plt.subplots(figsize=(9, 5))
     x = range(len(labels))
-    w = 0.24
-    ax.bar([i - w for i in x], p50, w, label="p50", color="#2E7D32")
-    ax.bar(list(x), p99, w, label="p99", color="#C62828")
-    ax.bar([i + w for i in x], p999, w, label="p99.9", color="#6A1B9A")
+    w = 0.22
+
+    bars_50 = ax.bar([i - w for i in x], p50, w, label="p50", color=ACCENT_GREEN, alpha=0.9)
+    bars_99 = ax.bar(list(x), p99, w, label="p99", color=ACCENT_ORANGE, alpha=0.9)
+    bars_999 = ax.bar([i + w for i in x], p999, w, label="p99.9", color=ACCENT_RED, alpha=0.9)
+
+    # Value labels on bars
+    for bars in [bars_50, bars_99, bars_999]:
+        for bar in bars:
+            h = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                h * 1.15,
+                format_ns(int(h)),
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                color=FG_DIM,
+            )
+
     ax.set_yscale("log")
     ax.set_ylabel("Latency (ns)")
     ax.set_xticks(list(x))
-    ax.set_xticklabels(labels)
-    ax.set_title("01. Path Snapshot: Typical vs Tail")
-    ax.legend(ncols=3)
+    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_title("Path Snapshot: Typical vs Tail Latency")
+    ax.legend(ncols=3, loc="upper left")
+    add_watermark(fig)
     save(fig, output_dir, "01_path_snapshot.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 02: Component Percentile Heatmap
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_component_percentile_heatmap(bench_map: dict[str, dict], output_dir: Path):
@@ -214,6 +321,7 @@ def plot_component_percentile_heatmap(bench_map: dict[str, dict], output_dir: Pa
         "update_state (1 sym)",
         "pipeline (batched)",
         "publish->state_update",
+        "pipeline e2e",
         "process publish->state_update",
         "live ingest->state_update",
         "live socket.read wait",
@@ -223,20 +331,44 @@ def plot_component_percentile_heatmap(bench_map: dict[str, dict], output_dir: Pa
         return
 
     cols = ["p50", "p90", "p99", "p999", "max"]
+    col_labels = ["p50", "p90", "p99", "p99.9", "max"]
     matrix = [[max(1, stat(bench_map, r, c)) for c in cols] for r in rows]
     vals = [v for row in matrix for v in row]
 
-    fig, ax = plt.subplots(figsize=(10.8, max(4.6, 0.46 * len(rows))))
-    norm = mcolors.LogNorm(vmin=min(vals), vmax=max(vals))
-    im = ax.imshow(matrix, cmap="YlOrRd", aspect="auto", norm=norm)
+    fig, ax = plt.subplots(figsize=(11, max(4.5, 0.5 * len(rows))))
+    norm = mcolors.LogNorm(vmin=max(1, min(vals)), vmax=max(vals))
+
+    # Custom colormap: dark blue → orange → red
+    from matplotlib.colors import LinearSegmentedColormap
+
+    cmap = LinearSegmentedColormap.from_list(
+        "hft_heat", ["#0D1117", "#1A3A5C", "#2E6B8A", "#D29922", "#F85149", "#FF6B6B"]
+    )
+
+    im = ax.imshow(matrix, cmap=cmap, aspect="auto", norm=norm)
     ax.set_xticks(range(len(cols)))
-    ax.set_xticklabels(["p50", "p90", "p99", "p99.9", "max"]) 
+    ax.set_xticklabels(col_labels)
     ax.set_yticks(range(len(rows)))
-    ax.set_yticklabels(rows)
-    ax.set_title("02. Component Percentile Heatmap (ns)")
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Latency (ns)")
+    ax.set_yticklabels(rows, fontsize=9)
+
+    # Annotate cells
+    for i, row in enumerate(matrix):
+        for j, v in enumerate(row):
+            text_color = FG_BRIGHT if v > (max(vals) * 0.1) else FG_DIM
+            ax.text(j, i, format_ns(v), ha="center", va="center", fontsize=8, color=text_color)
+
+    ax.set_title("Component Percentile Heatmap")
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label("Latency (ns)", color=FG)
+    cbar.ax.yaxis.set_tick_params(color=FG_DIM)
+    plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color=FG_DIM)
+    add_watermark(fig)
     save(fig, output_dir, "02_component_percentile_heatmap.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 03: Pipeline Waterfall (p50 decomposition)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_pipeline_waterfall(bench_map: dict[str, dict], output_dir: Path):
@@ -252,21 +384,47 @@ def plot_pipeline_waterfall(bench_map: dict[str, dict], output_dir: Path):
     numeric = max(0, full - parse)
     overhead = max(0, pipeline - (parse + numeric + publish + read + state))
 
-    labels = ["JSON", "Numeric", "Publish", "Read", "State", "Overhead"]
+    labels = ["JSON Parse", "Numeric", "Publish", "Read", "State Update", "Overhead"]
     vals = [parse, numeric, publish, read, state, overhead]
-    colors = ["#1565C0", "#0288D1", "#2E7D32", "#43A047", "#6A1B9A", "#757575"]
+    colors = [ACCENT_BLUE, ACCENT_CYAN, ACCENT_GREEN, "#3FB950", ACCENT_PURPLE, FG_DIM]
 
-    fig, ax = plt.subplots(figsize=(9.2, 4.6))
-    ax.barh(labels, vals, color=colors)
-    for i, v in enumerate(vals):
-        ax.text(v + max(1, pipeline * 0.01), i, f"{v}ns", va="center", fontsize=9)
-    ax.set_xlabel("Latency contribution (ns @ p50)")
-    ax.set_title(f"03. Pipeline Waterfall (total p50={pipeline}ns)")
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Cumulative waterfall
+    lefts = []
+    cumulative = 0
+    for v in vals:
+        lefts.append(cumulative)
+        cumulative += v
+
+    bars = ax.barh(labels, vals, left=lefts, color=colors, height=0.6, alpha=0.9)
+
+    for i, (v, left) in enumerate(zip(vals, lefts)):
+        if v > 0:
+            pct = v * 100 / max(1, pipeline)
+            ax.text(
+                left + v + max(1, pipeline * 0.015),
+                i,
+                f"{v}ns ({pct:.0f}%)",
+                va="center",
+                fontsize=9,
+                color=FG,
+            )
+
+    ax.set_xlabel("Cumulative Latency (ns)")
+    ax.set_title(f"Pipeline Waterfall @ p50 (total: {format_ns(pipeline)})")
+    ax.invert_yaxis()
+    add_watermark(fig)
     save(fig, output_dir, "03_pipeline_waterfall.png")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 04: Tail CCDF (exceedance probability curves)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
 def plot_tail_ccdf(distributions: dict[str, dict], output_dir: Path):
-    fig, ax = plt.subplots(figsize=(9.6, 5.2))
+    fig, ax = plt.subplots(figsize=(10, 5.5))
     plotted = 0
 
     for key, label, color in path_defs():
@@ -283,25 +441,45 @@ def plot_tail_ccdf(distributions: dict[str, dict], output_dir: Path):
             ys.append(max(1e-6, 1.0 - pct / 100.0))
         if not xs:
             continue
-        ax.plot(xs, ys, linewidth=2, color=color, label=label)
+        ax.plot(xs, ys, linewidth=2, color=color, label=label, alpha=0.9)
         plotted += 1
 
     if plotted == 0:
         plt.close(fig)
         return
 
+    # Reference lines for common SLA thresholds
+    for threshold_ns, label in [(1000, "1us"), (10000, "10us")]:
+        ax.axvline(threshold_ns, color=FG_DIM, linestyle=":", linewidth=0.8, alpha=0.5)
+        ax.text(
+            threshold_ns * 1.1,
+            ax.get_ylim()[0] * 2,
+            label,
+            color=FG_DIM,
+            fontsize=8,
+            alpha=0.6,
+        )
+
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Latency (ns)")
-    ax.set_ylabel("Exceedance Probability")
-    ax.set_title("04. Tail Risk Curves (CCDF)")
+    ax.set_ylabel("P(Latency > x)")
+    ax.set_title("Tail Risk: Complementary CDF")
     ax.legend()
-    save(fig, output_dir, "04_tail_ccdf_paths.png")
+    add_watermark(fig)
+    save(fig, output_dir, "04_tail_ccdf.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 05: Percentile Ladder (p50 → p99.999)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_percentile_ladders(distributions: dict[str, dict], output_dir: Path):
     ladder = [50.0, 75.0, 90.0, 95.0, 99.0, 99.5, 99.9, 99.99, 99.999]
-    fig, ax = plt.subplots(figsize=(9.6, 5.2))
+    labels = ["p50", "p75", "p90", "p95", "p99", "p99.5", "p99.9", "p99.99", "p99.999"]
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
     plotted = 0
 
     for key, label, color in path_defs():
@@ -309,7 +487,27 @@ def plot_percentile_ladders(distributions: dict[str, dict], output_dir: Path):
         if not d:
             continue
         ys = [quantile_lookup(d, p) for p in ladder]
-        ax.plot(ladder, ys, marker="o", linewidth=2, color=color, label=label)
+        ax.plot(
+            range(len(ladder)),
+            ys,
+            marker="o",
+            markersize=5,
+            linewidth=2,
+            color=color,
+            label=label,
+            alpha=0.9,
+        )
+        # Annotate the p99.9+ values
+        for i in range(6, len(ys)):
+            ax.annotate(
+                format_ns(ys[i]),
+                (i, ys[i]),
+                textcoords="offset points",
+                xytext=(8, 0),
+                fontsize=7,
+                color=color,
+                alpha=0.8,
+            )
         plotted += 1
 
     if plotted == 0:
@@ -317,11 +515,18 @@ def plot_percentile_ladders(distributions: dict[str, dict], output_dir: Path):
         return
 
     ax.set_yscale("log")
-    ax.set_xlabel("Percentile")
+    ax.set_xticks(range(len(ladder)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_ylabel("Latency (ns)")
-    ax.set_title("05. Percentile Ladder")
+    ax.set_title("Percentile Ladder")
     ax.legend()
-    save(fig, output_dir, "05_percentile_ladders.png")
+    add_watermark(fig)
+    save(fig, output_dir, "05_percentile_ladder.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 06: Latency Regime Composition (stacked bar)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def regime_buckets(hist: list[dict]) -> list[int]:
@@ -348,7 +553,7 @@ def regime_buckets(hist: list[dict]) -> list[int]:
 
 
 def plot_latency_regimes(distributions: dict[str, dict], output_dir: Path):
-    labels, shares = [], []
+    all_labels, shares = [], []
     for key, label, _ in path_defs():
         d = distributions.get(key)
         if not d:
@@ -357,31 +562,52 @@ def plot_latency_regimes(distributions: dict[str, dict], output_dir: Path):
         total = sum(buckets)
         if total <= 0:
             continue
-        labels.append(label)
+        all_labels.append(label)
         shares.append([b * 100.0 / total for b in buckets])
 
-    if not labels:
+    if not all_labels:
         return
 
-    fig, ax = plt.subplots(figsize=(9.6, 5.2))
-    regimes = ["<=125ns", "125-500ns", "0.5-2us", "2-10us", ">10us"]
-    colors = ["#166534", "#22C55E", "#F59E0B", "#F97316", "#B91C1C"]
-    bottoms = [0.0] * len(labels)
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    regimes = ["<125ns", "125-500ns", "0.5-2us", "2-10us", ">10us"]
+    colors = [ACCENT_GREEN, ACCENT_CYAN, ACCENT_YELLOW, ACCENT_ORANGE, ACCENT_RED]
+    bottoms = [0.0] * len(all_labels)
     for i, (name, color) in enumerate(zip(regimes, colors)):
         vals = [s[i] for s in shares]
-        ax.bar(labels, vals, bottom=bottoms, label=name, color=color)
+        ax.bar(all_labels, vals, bottom=bottoms, label=name, color=color, alpha=0.85, width=0.5)
+        # Label segments > 5%
+        for j, v in enumerate(vals):
+            if v > 5:
+                ax.text(
+                    j,
+                    bottoms[j] + v / 2,
+                    f"{v:.0f}%",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color=BG,
+                    weight="bold",
+                )
         bottoms = [b + v for b, v in zip(bottoms, vals)]
 
-    ax.set_ylabel("Share of samples (%)")
-    ax.set_title("06. Latency Regime Composition")
-    ax.legend(ncols=3, fontsize=8)
+    ax.set_ylabel("Share of Samples (%)")
+    ax.set_title("Latency Regime Composition")
+    ax.legend(ncols=5, loc="upper center", fontsize=8)
+    ax.set_ylim(0, 105)
+    add_watermark(fig)
     save(fig, output_dir, "06_latency_regimes.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 07: Tail Amplification Heatmap
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_tail_amplification_heatmap(bench_map: dict[str, dict], output_dir: Path):
     paths = [
         "pipeline (batched)",
         "publish->state_update",
+        "pipeline e2e",
         "process publish->state_update",
         "live ingest->state_update",
     ]
@@ -402,19 +628,37 @@ def plot_tail_amplification_heatmap(bench_map: dict[str, dict], output_dir: Path
         )
 
     vmax = max(max(row) for row in matrix)
-    fig, ax = plt.subplots(figsize=(8.2, max(3.8, 0.7 * len(rows))))
-    im = ax.imshow(matrix, cmap="OrRd", aspect="auto", vmin=1.0, vmax=max(1.0, vmax))
+    fig, ax = plt.subplots(figsize=(8.5, max(3.8, 0.8 * len(rows))))
+
+    from matplotlib.colors import LinearSegmentedColormap
+
+    cmap = LinearSegmentedColormap.from_list(
+        "amplification", [BG_PANEL, "#1A3A5C", ACCENT_ORANGE, ACCENT_RED]
+    )
+
+    im = ax.imshow(matrix, cmap=cmap, aspect="auto", vmin=1.0, vmax=max(2.0, vmax))
     ax.set_xticks(range(len(cols)))
     ax.set_xticklabels(cols)
     ax.set_yticks(range(len(rows)))
-    ax.set_yticklabels(rows)
-    ax.set_title("07. Tail Amplification Heatmap")
+    ax.set_yticklabels(rows, fontsize=9)
+    ax.set_title("Tail Amplification Factor")
+
     for i, row in enumerate(matrix):
         for j, v in enumerate(row):
-            ax.text(j, i, f"{v:.1f}x", ha="center", va="center", fontsize=9)
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Amplification factor")
-    save(fig, output_dir, "07_tail_amplification_heatmap.png")
+            color = FG_BRIGHT if v > vmax * 0.3 else FG
+            ax.text(j, i, f"{v:.1f}x", ha="center", va="center", fontsize=10, color=color, weight="bold")
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label("Multiplier", color=FG)
+    cbar.ax.yaxis.set_tick_params(color=FG_DIM)
+    plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color=FG_DIM)
+    add_watermark(fig)
+    save(fig, output_dir, "07_tail_amplification.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 08: Soak Control Chart (throughput stability)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_soak_control_chart(data: dict, output_dir: Path):
@@ -430,17 +674,39 @@ def plot_soak_control_chart(data: dict, output_dir: Path):
     mean = sum(y) / len(y)
     var = sum((v - mean) ** 2 for v in y) / len(y)
     sd = math.sqrt(var)
+    cv = (sd / mean * 100) if mean > 0 else 0
 
-    fig, ax = plt.subplots(figsize=(9.6, 4.8))
-    ax.plot(x, y, marker="o", linewidth=2, color="#2563EB", label="throughput")
-    ax.axhline(mean, color="#111827", linestyle="--", linewidth=1.4, label=f"mean={mean:.2f}")
-    ax.axhline(mean + sd, color="#9CA3AF", linestyle=":", linewidth=1.2, label="mean±1σ")
-    ax.axhline(mean - sd, color="#9CA3AF", linestyle=":", linewidth=1.2)
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Fill sigma bands
+    ax.axhspan(mean - sd, mean + sd, color=ACCENT_BLUE, alpha=0.08)
+    ax.axhline(mean, color=ACCENT_BLUE, linestyle="--", linewidth=1.5, alpha=0.8, label=f"mean={mean:.2f} M/s")
+    ax.axhline(mean + sd, color=FG_DIM, linestyle=":", linewidth=0.8, alpha=0.5)
+    ax.axhline(mean - sd, color=FG_DIM, linestyle=":", linewidth=0.8, alpha=0.5)
+
+    # Color points by deviation
+    for i in range(len(x)):
+        c = ACCENT_GREEN if abs(y[i] - mean) <= sd else ACCENT_ORANGE if abs(y[i] - mean) <= 2 * sd else ACCENT_RED
+        ax.plot(x[i], y[i], "o", color=c, markersize=6, zorder=5)
+
+    ax.plot(x, y, linewidth=1.5, color=ACCENT_BLUE, alpha=0.5, zorder=4)
+
     ax.set_xlabel("Second")
     ax.set_ylabel("Throughput (M events/s)")
-    ax.set_title("08. Soak Control Chart")
-    ax.legend(ncols=3, fontsize=8)
-    save(fig, output_dir, "08_soak_control_chart.png")
+    ax.set_title(f"Soak Stability (CV={cv:.1f}%)")
+    ax.legend(loc="upper right")
+
+    # Annotate sigma bands
+    ax.text(max(x) + 0.3, mean + sd, "+1\u03c3", color=FG_DIM, fontsize=8, va="center")
+    ax.text(max(x) + 0.3, mean - sd, "-1\u03c3", color=FG_DIM, fontsize=8, va="center")
+
+    add_watermark(fig)
+    save(fig, output_dir, "08_soak_control.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 09: Burst Tail Tradeoff
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_burst_tail_tradeoff(data: dict, output_dir: Path):
@@ -452,21 +718,38 @@ def plot_burst_tail_tradeoff(data: dict, output_dir: Path):
     t = [to_float(x.get("throughput_meps", 0.0), 0.0) for x in rounds]
     p99 = [max(1, to_int((x.get("stats") or {}).get("p99", 0), 1)) for x in rounds]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.6, 4.8))
-    ax1.plot(r, t, marker="o", linewidth=2, color="#0F766E")
-    ax1.set_xlabel("Burst round")
-    ax1.set_ylabel("Throughput (M events/s)")
-    ax1.set_title("09a. Burst Throughput by Round")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
 
-    ax2.scatter(t, p99, s=44, color="#B91C1C")
+    # Left: throughput by round
+    ax1.fill_between(r, t, color=ACCENT_CYAN, alpha=0.15)
+    ax1.plot(r, t, marker="o", markersize=4, linewidth=2, color=ACCENT_CYAN)
+    ax1.set_xlabel("Burst Round")
+    ax1.set_ylabel("Throughput (M events/s)")
+    ax1.set_title("Throughput by Round")
+
+    # Right: tail vs throughput scatter
+    scatter = ax2.scatter(t, p99, s=50, c=p99, cmap="YlOrRd", norm=mcolors.LogNorm(), zorder=5, edgecolors=GRID)
     for i, rr in enumerate(r):
-        ax2.annotate(str(rr), (t[i], p99[i]), textcoords="offset points", xytext=(4, 3), fontsize=8)
+        ax2.annotate(
+            str(rr),
+            (t[i], p99[i]),
+            textcoords="offset points",
+            xytext=(5, 3),
+            fontsize=7,
+            color=FG_DIM,
+        )
     ax2.set_yscale("log")
     ax2.set_xlabel("Throughput (M events/s)")
-    ax2.set_ylabel("p99 latency (ns)")
-    ax2.set_title("09b. Tail vs Throughput")
+    ax2.set_ylabel("p99 Latency (ns)")
+    ax2.set_title("Tail vs Throughput")
 
-    save(fig, output_dir, "09_burst_tail_tradeoff.png")
+    add_watermark(fig)
+    save(fig, output_dir, "09_burst_tradeoff.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 10: Live Socket Wait CCDF
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_live_socket_wait_ccdf(distributions: dict[str, dict], output_dir: Path):
@@ -484,29 +767,35 @@ def plot_live_socket_wait_ccdf(distributions: dict[str, dict], output_dir: Path)
     if not xs:
         return
 
-    fig, ax = plt.subplots(figsize=(9.6, 5.0))
-    ax.plot(xs, ys, linewidth=2, color="#7C3AED")
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(xs, ys, linewidth=2, color=ACCENT_PURPLE, alpha=0.9)
+    ax.fill_between(xs, ys, alpha=0.1, color=ACCENT_PURPLE)
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("socket.read wait (ns)")
-    ax.set_ylabel("Exceedance Probability")
-    ax.set_title("10. Live Socket Read-Wait Tail (CCDF)")
-    save(fig, output_dir, "10_live_socket_wait_ccdf.png")
+    ax.set_xlabel("socket.read() Wait (ns)")
+    ax.set_ylabel("P(Wait > x)")
+    ax.set_title("Live Socket Read-Wait Tail (CCDF)")
+    add_watermark(fig)
+    save(fig, output_dir, "10_live_socket_ccdf.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Chart 11: Stage Waterfall (real pipeline per-stage timing)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def plot_stage_waterfall(bench_map: dict[str, dict], output_dir: Path):
-    """Per-stage breakdown from PerfRecorder instrumented data."""
     obs_stages = [
-        ("ParseJson", "#1565C0"),
-        ("ParseNumeric", "#0288D1"),
-        ("TimestampEvent", "#00838F"),
-        ("BuildTob", "#00695C"),
-        ("Publish", "#2E7D32"),
+        ("ParseJson", ACCENT_BLUE),
+        ("ParseNumeric", ACCENT_CYAN),
+        ("TimestampEvent", "#4C8BF5"),
+        ("BuildTob", "#3D6B9E"),
+        ("Publish", ACCENT_GREEN),
     ]
     onyx_stages = [
-        ("TryRead", "#43A047"),
-        ("ProcessEvent", "#6A1B9A"),
-        ("PrefetchNext", "#AD1457"),
+        ("TryRead", ACCENT_ORANGE),
+        ("ProcessEvent", ACCENT_PURPLE),
+        ("PrefetchNext", ACCENT_PINK),
     ]
 
     obs_vals = [(n, stat(bench_map, n, "p50"), c) for n, c in obs_stages if n in bench_map]
@@ -515,26 +804,64 @@ def plot_stage_waterfall(bench_map: dict[str, dict], output_dir: Path):
     if not obs_vals and not onyx_vals:
         return
 
-    all_items = obs_vals + onyx_vals
-    labels = [n for n, _, _ in all_items]
-    vals = [v for _, v, _ in all_items]
-    colors = [c for _, _, c in all_items]
+    # Add section divider
+    all_items = []
+    if obs_vals:
+        all_items.extend(obs_vals)
+    if obs_vals and onyx_vals:
+        all_items.append(("---", 0, BG))  # separator
+    if onyx_vals:
+        all_items.extend(onyx_vals)
 
-    fig, ax = plt.subplots(figsize=(9.6, max(4.0, 0.5 * len(labels))))
-    ax.barh(labels, vals, color=colors)
+    labels = []
+    vals = []
+    colors = []
+    for n, v, c in all_items:
+        if n == "---":
+            labels.append("")
+            vals.append(0)
+            colors.append(BG)
+        else:
+            labels.append(n)
+            vals.append(v)
+            colors.append(c)
+
+    total = max(1, sum(v for v in vals if v > 0))
+    obs_total = stat(bench_map, "ObsidianTotal", "p50")
+    onyx_total = stat(bench_map, "OnyxTotal", "p50")
+
+    fig, ax = plt.subplots(figsize=(10, max(4.5, 0.55 * len(labels))))
+    bars = ax.barh(labels, vals, color=colors, height=0.6, alpha=0.9)
+
     for i, v in enumerate(vals):
-        total = max(1, sum(vals))
-        ax.text(
-            v + max(1, total * 0.01),
-            i,
-            f"{v}ns ({v*100//max(1,total)}%)",
-            va="center",
-            fontsize=9,
-        )
+        if v > 0:
+            pct = v * 100 // total
+            ax.text(
+                v + max(1, total * 0.015),
+                i,
+                f"{v}ns ({pct}%)",
+                va="center",
+                fontsize=9,
+                color=FG,
+            )
+
     ax.set_xlabel("Latency (ns @ p50)")
-    ax.set_title("Stage Waterfall (real pipeline instrumentation)")
+
+    title_parts = []
+    if obs_total > 0:
+        title_parts.append(f"Obsidian: {format_ns(obs_total)}")
+    if onyx_total > 0:
+        title_parts.append(f"Onyx: {format_ns(onyx_total)}")
+    subtitle = " | ".join(title_parts)
+    ax.set_title(f"Stage Waterfall ({subtitle})" if subtitle else "Stage Waterfall")
     ax.invert_yaxis()
+    add_watermark(fig)
     save(fig, output_dir, "11_stage_waterfall.png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def main() -> None:
@@ -543,16 +870,18 @@ def main() -> None:
 
     report = args.report or find_latest_report(args.results_dir)
     if report is None:
-        print("Error: no *_report.json files found. Run perf_report first.")
+        print("Error: no *_report.json found. Run perf_report first.")
         sys.exit(1)
 
     output_dir = args.output_dir or (args.results_dir / "plots")
     output_dir.mkdir(parents=True, exist_ok=True)
-    if not args.no_clean:
-        removed = clean_output_dir(output_dir)
-        print(f"Cleaned {removed} stale plot files from: {output_dir}")
 
-    print(f"Reading: {report}")
+    # Always clean old plots (overwrite)
+    removed = clean_output_dir(output_dir)
+    if removed > 0:
+        print(f"  Cleaned {removed} old plot files")
+
+    print(f"  Reading: {report.name}")
     with open(report, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -564,6 +893,7 @@ def main() -> None:
     bench_map = {b["name"]: b for b in benchmarks if "name" in b}
     distributions = extract_distributions(data)
 
+    print("  Generating charts:")
     plot_path_snapshot(bench_map, output_dir)
     plot_component_percentile_heatmap(bench_map, output_dir)
     plot_pipeline_waterfall(bench_map, output_dir)
@@ -576,7 +906,7 @@ def main() -> None:
     plot_live_socket_wait_ccdf(distributions, output_dir)
     plot_stage_waterfall(bench_map, output_dir)
 
-    print(f"\nAll plots saved to: {output_dir}")
+    print(f"\n  All charts saved to: {output_dir}")
 
 
 if __name__ == "__main__":

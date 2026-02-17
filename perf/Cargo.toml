@@ -42,7 +42,3 @@ harness = false
 [[bench]]
 name = "bench_market_state"
 harness = false
-
-[[bench]]
-name = "bench_pipeline"
-harness = false

@@ -8,67 +8,126 @@ RESULTS_DIR="$PERF_DIR/results"
 
 mkdir -p "$RESULTS_DIR"
 
-echo "=== Lithos Performance Suite ==="
-echo ""
+usage() {
+    cat <<EOF
+Lithos Performance Suite
 
+Usage: $(basename "$0") [mode] [options]
+
+Modes:
+  perf          Full suite: build + report + criterion + plot (default)
+  bench         Criterion micro-benchmarks only
+  plot          Generate plots from latest results
+
+Options:
+  --flamegraph  Generate flamegraph (requires sudo, perf mode only)
+  -h, --help    Show this help
+
+Examples:
+  $(basename "$0")              # full suite
+  $(basename "$0") perf         # full suite (explicit)
+  $(basename "$0") bench        # criterion only
+  $(basename "$0") plot         # plot latest results
+EOF
+    exit 0
+}
+
+# ── Parse args ──────────────────────────────────────────────────────────────
+
+MODE="perf"
 FLAMEGRAPH=false
+
 for arg in "$@"; do
-    if [ "$arg" = "--flamegraph" ]; then
-        FLAMEGRAPH=true
-    fi
+    case "$arg" in
+        perf|bench|plot) MODE="$arg" ;;
+        --flamegraph)    FLAMEGRAPH=true ;;
+        -h|--help)       usage ;;
+        *)               echo "Unknown argument: $arg"; usage ;;
+    esac
 done
 
-# 1. Build release
-echo "[1/4] Building release binaries..."
-cargo build --release -p lithos-perf
-echo "     Done."
-echo ""
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
-# 2. Run perf_report (real pipeline instrumentation)
-echo "[2/4] Running perf report (real pipeline)..."
-REPORT_OUTPUT="$RESULTS_DIR/$(date +%Y%m%d_%H%M%S)_stdout.txt"
-"$ROOT_DIR/target/release/perf_report" 2>&1 | tee "$REPORT_OUTPUT"
-echo ""
-echo "     Report saved to: $REPORT_OUTPUT"
-echo ""
-
-# 3. Run criterion benchmarks
-echo "[3/4] Running criterion benchmarks..."
-cargo bench -p lithos-perf 2>&1
-echo ""
-
-# 4. Plot results (optional)
-echo "[4/4] Generating plots..."
-if command -v python3 &>/dev/null; then
-    if python3 -c "import matplotlib" 2>/dev/null; then
-        python3 "$SCRIPT_DIR/plot_results.py"
-        echo "     Plots saved to: $RESULTS_DIR/plots/"
-    else
-        echo "     Skipped: matplotlib not installed (pip3 install matplotlib)"
-    fi
-else
-    echo "     Skipped: python3 not found"
-fi
-
-# Optional flamegraph
-if [ "$FLAMEGRAPH" = true ]; then
+build_release() {
+    echo "[build] Compiling release binaries..."
+    cargo build --release -p lithos-perf
     echo ""
-    echo "[extra] Generating flamegraph (requires sudo for dtrace on macOS)..."
+}
+
+run_report() {
+    echo "[report] Running perf report (Obsidian + Onyx pipeline)..."
+    "$ROOT_DIR/target/release/perf_report" 2>&1
+    echo ""
+}
+
+run_criterion() {
+    echo "[bench] Running criterion micro-benchmarks..."
+    cargo bench -p lithos-perf 2>&1
+    echo ""
+}
+
+run_plots() {
+    echo "[plot] Generating charts from latest results..."
+    if ! command -v python3 &>/dev/null; then
+        echo "  Skipped: python3 not found"
+        return
+    fi
+    if ! python3 -c "import matplotlib" 2>/dev/null; then
+        echo "  Skipped: matplotlib not installed (pip3 install matplotlib)"
+        return
+    fi
+    python3 "$SCRIPT_DIR/plot_results.py"
+    echo "  Charts saved to: $RESULTS_DIR/plots/"
+    echo ""
+}
+
+run_flamegraph() {
+    if [ "$FLAMEGRAPH" != true ]; then return; fi
+    echo "[flamegraph] Generating flamegraph (requires sudo)..."
     if command -v cargo-flamegraph &>/dev/null || cargo install --list | grep -q flamegraph; then
         sudo cargo flamegraph --bin perf_report -p lithos-perf -o "$RESULTS_DIR/flamegraph.svg" -- 2>&1
-        echo "     Flamegraph saved to: $RESULTS_DIR/flamegraph.svg"
+        echo "  Saved: $RESULTS_DIR/flamegraph.svg"
     else
-        echo "     Skipped: cargo-flamegraph not installed (cargo install flamegraph)"
+        echo "  Skipped: cargo-flamegraph not installed (cargo install flamegraph)"
     fi
-fi
+    echo ""
+}
+
+print_summary() {
+    echo "── Results ──────────────────────────────────────────────"
+    [ -d "$RESULTS_DIR" ] && {
+        LATEST_JSON=$(ls -t "$RESULTS_DIR"/*_report.json 2>/dev/null | head -1 || true)
+        [ -n "$LATEST_JSON" ] && echo "  Report:    $LATEST_JSON"
+    }
+    [ -d "$ROOT_DIR/target/criterion" ] && echo "  Criterion: $ROOT_DIR/target/criterion/"
+    [ -d "$RESULTS_DIR/plots" ] && echo "  Charts:    $RESULTS_DIR/plots/"
+    echo ""
+}
+
+# ── Execute ─────────────────────────────────────────────────────────────────
 
 echo ""
-echo "=== Results ==="
-echo "  Perf report:      $REPORT_OUTPUT"
-echo "  JSON results:     $RESULTS_DIR/*_report.json"
-echo "  Criterion HTML:   $ROOT_DIR/target/criterion/"
-if [ -d "$RESULTS_DIR/plots" ]; then
-    echo "  Plots:            $RESULTS_DIR/plots/"
-fi
+echo "=== Lithos Performance Suite [mode: $MODE] ==="
 echo ""
+
+case "$MODE" in
+    perf)
+        build_release
+        run_report
+        run_criterion
+        run_plots
+        run_flamegraph
+        print_summary
+        ;;
+    bench)
+        build_release
+        run_criterion
+        print_summary
+        ;;
+    plot)
+        run_plots
+        print_summary
+        ;;
+esac
+
 echo "Done."
