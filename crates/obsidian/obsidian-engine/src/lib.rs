@@ -6,9 +6,9 @@ use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
 use obsidian_util::timestamp::now_ns;
 use std::net::TcpStream;
 use std::path::Path;
+use tracing::debug;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket, connect};
-use tracing::debug;
 
 pub type WebsocketStream = WebSocket<MaybeTlsStream<TcpStream>>;
 
@@ -19,7 +19,11 @@ pub struct ObsidianEngine {
 }
 
 impl ObsidianEngine {
-    pub fn new<P: AsRef<Path>>(path: P, connection: &ConnectionConfig, symbol_id: SymbolId) -> std::io::Result<Self> {
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+        connection: &ConnectionConfig,
+        symbol_id: SymbolId,
+    ) -> std::io::Result<Self> {
         let (socket, _resposne) = connect(&connection.url).expect("failed to connect");
         let writer = BroadcastWriter::<Event>::open(path)?;
         Ok(ObsidianEngine {

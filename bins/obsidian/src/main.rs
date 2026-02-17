@@ -1,4 +1,4 @@
-use lithos_events::{TopOfBook, SymbolId};
+use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::{BroadcastWriter, RingConfig};
 use obsidian_config::config::ObsidianConfig;
 use obsidian_engine::ObsidianEngine;
@@ -10,10 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ObsidianConfig::load(&config_path)?;
 
     tracing_subscriber::fmt()
-    .with_env_filter(
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
-    )
-    .init();
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+        )
+        .init();
 
     BroadcastWriter::<TopOfBook>::create(&config.shm_file_path, RingConfig::new(config.capacity))
         .expect("failed to create mmap ring");
@@ -28,11 +28,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let path = config.shm_file_path.clone();
         std::thread::spawn(move || {
             let mut engine =
-                ObsidianEngine::new(&path, &connection, SymbolId(connection.symbol_id)).expect("Unable to initialise ObsidianEngine");
+                ObsidianEngine::new(&path, &connection, SymbolId(connection.symbol_id))
+                    .expect("Unable to initialise ObsidianEngine");
             engine.run();
         });
     }
 
     // block main thread from exiting
-    loop { std::thread::park(); }
+    loop {
+        std::thread::park();
+    }
 }

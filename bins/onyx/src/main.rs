@@ -8,6 +8,7 @@ use tracing_subscriber::EnvFilter;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = "/Users/adityaanand/dev/lithos/config/onyx/config.toml";
     let config = OnyxConfig::load(&config_path)?;
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
