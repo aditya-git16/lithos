@@ -126,7 +126,7 @@ impl MarketStateManager {
         }
     }
 
-    pub fn update_market_state_tob(&mut self, tob: &TopOfBook)  {
+    pub fn update_market_state_tob(&mut self, tob: &TopOfBook) {
         // Use symbol id as array index: SymbolId is a newtype over u16,
         // so .0 gives the raw value; usize is required for indexing.
         let tob_symbol = tob.symbol_id.0 as usize;

@@ -13,12 +13,16 @@ fn bench_binance_parse(c: &mut Criterion) {
 
     let bytes = MSG.as_bytes();
 
-    group.bench_with_input(BenchmarkId::new("fast_fields_only", "bookTicker"), &MSG, |b, msg| {
-        b.iter(|| {
-            let v = parse_binance_book_ticker_fast(black_box(msg)).expect("fast parse failed");
-            black_box(v.b.len() + v.b_qty.len() + v.a.len() + v.a_qty.len())
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::new("fast_fields_only", "bookTicker"),
+        &MSG,
+        |b, msg| {
+            b.iter(|| {
+                let v = parse_binance_book_ticker_fast(black_box(msg)).expect("fast parse failed");
+                black_box(v.b.len() + v.b_qty.len() + v.a.len() + v.a_qty.len())
+            });
+        },
+    );
 
     group.bench_with_input(
         BenchmarkId::new("sonic_unchecked_fields_only", "bookTicker"),

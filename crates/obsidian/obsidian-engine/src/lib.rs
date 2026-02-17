@@ -29,8 +29,8 @@ impl ObsidianEngine {
         connection: &ConnectionConfig,
         symbol_id: SymbolId,
     ) -> std::io::Result<Self> {
-        let (mut socket, _response) =
-            connect(&connection.url).map_err(|e| io::Error::other(format!("connect failed: {e}")))?;
+        let (mut socket, _response) = connect(&connection.url)
+            .map_err(|e| io::Error::other(format!("connect failed: {e}")))?;
         // Set TCP_NODELAY to true to disable Nagle's algorithm.
         // This instructs the OS to send small packets immediately rather than buffering them,
         // reducing latency at the cost of possibly increasing network overhead.

@@ -1,4 +1,3 @@
-
 use lithos_events::TopOfBook;
 use lithos_icc::BroadcastReader;
 use onyx_core::MarketStateManager;
