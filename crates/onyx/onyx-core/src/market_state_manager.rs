@@ -126,20 +126,15 @@ impl MarketStateManager {
         }
     }
 
-    pub fn update_market_state_tob(&mut self, tob: &TopOfBook) -> Result<(), &'static str> {
+    pub fn update_market_state_tob(&mut self, tob: &TopOfBook)  {
         // Use symbol id as array index: SymbolId is a newtype over u16,
         // so .0 gives the raw value; usize is required for indexing.
         let tob_symbol = tob.symbol_id.0 as usize;
 
-        if tob_symbol >= MAX_SYMBOLS {
-            return Err("invalid index");
-        }
-
         // gets mutable ref to the market state at that index
-        let market = &mut self.markets[tob_symbol];
+        // using unsafe to prevent implicit check on bound and prevent branching
+        let market = &mut unsafe { self.markets.get_unchecked_mut(tob_symbol) };
 
         market.update_state_tob(&tob);
-
-        Ok(())
     }
 }
