@@ -2,9 +2,10 @@ use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::BroadcastWriter;
 use obsidian_config::config::ConnectionConfig;
 use obsidian_core::dto::BinanceDto;
+use obsidian_util::binance_book_ticker::parse_binance_book_ticker_fast;
 use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
 use obsidian_util::timestamp::now_ns;
-use sonic_rs::from_slice_unchecked;
+use sonic_rs::from_slice;
 use std::io;
 use std::net::TcpStream;
 use std::path::Path;
@@ -56,21 +57,28 @@ impl ObsidianEngine {
 
             match data {
                 Message::Text(text) => {
-                    let dto: BinanceDto = match unsafe { from_slice_unchecked(text.as_ref()) } {
-                        Ok(dto) => dto,
-                        Err(e) => {
-                            warn!(?e, "unable to parse websocket payload");
-                            continue;
-                        }
-                    };
+                    let text_str: &str = text.as_ref();
+                    let (b, b_qty, a, a_qty) =
+                        if let Some(fast) = parse_binance_book_ticker_fast(text_str) {
+                            (fast.b, fast.b_qty, fast.a, fast.a_qty)
+                        } else {
+                            let dto: BinanceDto = match from_slice(text_str.as_bytes()) {
+                                Ok(dto) => dto,
+                                Err(e) => {
+                                    warn!(?e, "unable to parse websocket payload");
+                                    continue;
+                                }
+                            };
+                            (dto.b, dto.b_qty, dto.a, dto.a_qty)
+                        };
 
                     let tob = TopOfBook {
                         ts_event_ns: now_ns(),
                         symbol_id: self.symbol_id,
-                        bid_px_ticks: parse_px_2dp(&dto.b),
-                        bid_qty_lots: parse_qty_3dp(&dto.b_qty),
-                        ask_px_ticks: parse_px_2dp(&dto.a),
-                        ask_qty_lots: parse_qty_3dp(&dto.a_qty),
+                        bid_px_ticks: parse_px_2dp(b),
+                        bid_qty_lots: parse_qty_3dp(b_qty),
+                        ask_px_ticks: parse_px_2dp(a),
+                        ask_qty_lots: parse_qty_3dp(a_qty),
                     };
                     self.writer.publish(tob);
                     #[cfg(debug_assertions)]
