@@ -7,6 +7,7 @@ use obsidian_util::timestamp::now_ns;
 use sonic_rs::from_slice_unchecked;
 use std::net::TcpStream;
 use std::path::Path;
+#[cfg(debug_assertions)]
 use tracing::debug;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket, connect};
@@ -52,6 +53,7 @@ impl ObsidianEngine {
                         ask_qty_lots: parse_qty_3dp(&dto.a_qty),
                     };
                     self.writer.publish(tob);
+                    #[cfg(debug_assertions)]
                     debug!("market_state[{}]: {:?}", tob.symbol_id.0, tob);
                 }
                 Message::Ping(payload) => {

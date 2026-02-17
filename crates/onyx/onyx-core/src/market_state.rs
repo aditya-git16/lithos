@@ -10,6 +10,7 @@
 // Strust values need to be public since we will use functions to update the state
 
 use lithos_events::{SymbolId, TopOfBook};
+#[cfg(debug_assertions)]
 use tracing::debug;
 
 #[derive(Debug, Default, Clone)]
@@ -55,6 +56,7 @@ impl MarketsState {
         self.last_tob = *tob;
         self.mid_x2 = tob.bid_px_ticks + tob.ask_px_ticks;
         self.spread_ticks = tob.ask_px_ticks - tob.bid_px_ticks;
+        #[cfg(debug_assertions)]
         debug!("market_state[{}]: {:?}", tob.symbol_id.0, self);
     }
 }
