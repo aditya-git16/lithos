@@ -6,6 +6,7 @@ members = [
   "crates/lithos/*",
   "crates/obsidian/*",
   "crates/onyx/*",
+  "perf",
 ]
 
 [workspace.dependencies]

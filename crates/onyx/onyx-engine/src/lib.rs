@@ -3,51 +3,73 @@ use lithos_icc::BroadcastReader;
 use onyx_core::MarketStateManager;
 use std::path::Path;
 
-pub struct OnyxEngine {
-    // per symbol market state
-    // this is the state that will get updated
-    pub market_state_manager: MarketStateManager,
+#[cfg(feature = "perf")]
+use lithos_perf_recorder::{PerfRecorder, PerfStage};
 
-    // A reader from shared memory ?
-    // To read events , we have already defined a broadcast reader so we can use that
-    // we replace the generic with TopOfBook as this is the type we publish.
+pub struct OnyxEngine {
+    pub market_state_manager: MarketStateManager,
     pub reader: BroadcastReader<TopOfBook>,
+    #[cfg(feature = "perf")]
+    pub perf: PerfRecorder,
 }
 
-// Implement the functionality of the engine
-
 impl OnyxEngine {
-    // First create/initialise the engine
     pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let market_state_manager = MarketStateManager::new();
-        // this part can be abstracted ?
         let reader = BroadcastReader::<TopOfBook>::open(path)?;
         Ok(OnyxEngine {
             market_state_manager,
             reader,
+            #[cfg(feature = "perf")]
+            perf: PerfRecorder::new(),
         })
     }
 
-    // Now we define the run function of the engine
-    // it will return nothing ?
-    // it runs the engine -> polls the shm , update the state
-    // it runs in a constant loop and polls the shm
     pub fn run(&mut self) {
         loop {
-            // poll the events , this fucntion should return , one event at a time
             self.poll_events();
         }
     }
 
-    fn poll_events(&mut self) {
-        // we use while let instead of if let because in if let we process just one event
-        // but in case of while let we keep processing as long as we get events
-        while let Some(event) = self.reader.try_read() {
-            // then we process the event (process as in using that event to calculate state , using state + event)
+    pub fn poll_events(&mut self) -> usize {
+        let mut count = 0usize;
+        while let Some(event) = {
+            #[cfg(feature = "perf")]
+            self.perf.begin(PerfStage::TryRead);
+
+            let ev = self.reader.try_read();
+
+            #[cfg(feature = "perf")]
+            self.perf.end(PerfStage::TryRead);
+
+            ev
+        } {
+            #[cfg(feature = "perf")]
+            self.perf.begin(PerfStage::OnyxTotal);
+
+            #[cfg(feature = "perf")]
+            self.perf.begin(PerfStage::ProcessEvent);
+
             self.process_event(&event);
+
+            #[cfg(feature = "perf")]
+            self.perf.end(PerfStage::ProcessEvent);
+
+            #[cfg(feature = "perf")]
+            self.perf.begin(PerfStage::PrefetchNext);
+
             self.reader.prefetch_next();
-            core::hint::spin_loop()
+
+            #[cfg(feature = "perf")]
+            self.perf.end(PerfStage::PrefetchNext);
+
+            #[cfg(feature = "perf")]
+            self.perf.end(PerfStage::OnyxTotal);
+
+            core::hint::spin_loop();
+            count += 1;
         }
+        count
     }
 
     #[inline]

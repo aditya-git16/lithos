@@ -1,0 +1,48 @@
+[package]
+name = "lithos-perf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lithos-events = { path = "../crates/lithos/lithos-events" }
+lithos-icc = { path = "../crates/lithos/lithos-icc" }
+lithos-mmap = { path = "../crates/lithos/lithos-mmap" }
+lithos-perf-recorder = { path = "../crates/lithos/lithos-perf-recorder", features = ["record"] }
+obsidian-engine = { path = "../crates/obsidian/obsidian-engine", features = ["perf"] }
+obsidian-util = { path = "../crates/obsidian/obsidian-util" }
+obsidian-core = { path = "../crates/obsidian/obsidian-core" }
+onyx-engine = { path = "../crates/onyx/onyx-engine", features = ["perf"] }
+onyx-core = { path = "../crates/onyx/onyx-core" }
+libc = "0.2"
+serde = { workspace = true }
+serde_json = "1.0"
+sonic-rs = "0.5.6"
+tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23", features = ["ring"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bin]]
+name = "perf_report"
+path = "src/bin/perf_report.rs"
+
+[[bench]]
+name = "bench_timestamp"
+harness = false
+
+[[bench]]
+name = "bench_parsing"
+harness = false
+
+[[bench]]
+name = "bench_broadcast"
+harness = false
+
+[[bench]]
+name = "bench_market_state"
+harness = false
+
+[[bench]]
+name = "bench_pipeline"
+harness = false
