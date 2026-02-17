@@ -43,6 +43,8 @@ pub struct BroadcastWriter<T: Copy> {
     _mm: MmapFileMut,
     /// Raw pointer to the start of the mapped region (header location).
     base: *mut u8,
+    /// Cached pointer to the first slot in the ring.
+    slots_base: *mut SeqlockSlot<T>,
     /// Bitmask for fast modulo: `index = seq & mask` (capacity must be power of 2).
     mask: u64,
     /// Marker to tie the struct to type `T` without storing a `T`.
@@ -62,6 +64,8 @@ pub struct BroadcastReader<T: Copy> {
     _mm: MmapFile,
     /// Raw pointer to the start of the mapped region (read-only).
     base: *const u8,
+    /// Cached pointer to the first slot in the ring.
+    slots_base: *const SeqlockSlot<T>,
     /// Local read cursor: sequence number of the next item to read.
     read_seq: u64,
     /// Bitmask for fast index calculation.
@@ -91,8 +95,9 @@ impl<T: Copy> BroadcastWriter<T> {
         let bytes = bytes_for_ring::<T>(cfg.capacity);
         let mut mm = MmapFileMut::create_rw(path, bytes)?;
         let base = mm.as_mut_ptr();
+        let slots_base = unsafe { base.add(size_of::<RingHeader>()) as *mut SeqlockSlot<T> };
 
-        // SAFETY: We just created this mmap region exclusively, so we have sole access.
+        // We just created this mmap region exclusively, so we have sole access.
         // The region is sized correctly for the header + slots.
         unsafe {
             // Initialize the header at the start of the mapped region
@@ -108,9 +113,8 @@ impl<T: Copy> BroadcastWriter<T> {
             );
 
             // Initialize each slot's seqlock to a consistent initial state
-            let slots = base.add(size_of::<RingHeader>()) as *mut SeqlockSlot<T>;
             for i in 0..cfg.capacity {
-                let s = &mut *slots.add(i);
+                let s = &mut *slots_base.add(i);
                 s.init();
             }
         }
@@ -118,6 +122,7 @@ impl<T: Copy> BroadcastWriter<T> {
         Ok(Self {
             _mm: mm,
             base,
+            slots_base,
             mask: cfg.mask(),
             _pd: PhantomData,
         })
@@ -130,12 +135,14 @@ impl<T: Copy> BroadcastWriter<T> {
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let mut mm = MmapFileMut::open_rw(path)?; // need open_rw in lithos_mmap
         let base = mm.as_mut_ptr();
+        let slots_base = unsafe { base.add(size_of::<RingHeader>()) as *mut SeqlockSlot<T> };
         let h = unsafe { &*(base as *const RingHeader) };
         let _ = h.validate::<T>();
         let cap = h.capacity;
         Ok(Self {
             _mm: mm,
             base,
+            slots_base,
             mask: cap - 1,
             _pd: PhantomData,
         })
@@ -158,8 +165,7 @@ impl<T: Copy> BroadcastWriter<T> {
     #[inline(always)]
     fn slot_mut(&mut self, idx: u64) -> &mut SeqlockSlot<T> {
         // SAFETY: idx is always masked to be within capacity bounds
-        let slots = unsafe { self.base.add(size_of::<RingHeader>()) as *mut SeqlockSlot<T> };
-        unsafe { &mut *slots.add(idx as usize) }
+        unsafe { &mut *self.slots_base.add(idx as usize) }
     }
 
     /// Publishes a single item to the ring buffer.
@@ -202,6 +208,7 @@ impl<T: Copy> BroadcastReader<T> {
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let mm = MmapFile::open_ro(path)?;
         let base = mm.as_ptr();
+        let slots_base = unsafe { base.add(size_of::<RingHeader>()) as *const SeqlockSlot<T> };
 
         // SAFETY: We're reading the header to validate it. If the file is corrupted,
         // validate() will catch it.
@@ -222,6 +229,7 @@ impl<T: Copy> BroadcastReader<T> {
         Ok(Self {
             _mm: mm,
             base,
+            slots_base,
             read_seq,
             mask,
             capacity: cap,
@@ -233,16 +241,15 @@ impl<T: Copy> BroadcastReader<T> {
     /// Returns a reference to the ring header.
     #[inline(always)]
     fn header(&self) -> &RingHeader {
-        // SAFETY: base points to a validated RingHeader
+        // base points to a validated RingHeader
         unsafe { &*(self.base as *const RingHeader) }
     }
 
     /// Returns a reference to the slot at the given index.
     #[inline(always)]
     fn slot(&self, idx: u64) -> &SeqlockSlot<T> {
-        // SAFETY: idx is always masked to be within capacity bounds
-        let slots = unsafe { self.base.add(size_of::<RingHeader>()) as *const SeqlockSlot<T> };
-        unsafe { &*slots.add(idx as usize) }
+        // idx is always masked to be within capacity bounds
+        unsafe { &*self.slots_base.add(idx as usize) }
     }
 
     /// Attempts to read the next item from the ring buffer.
