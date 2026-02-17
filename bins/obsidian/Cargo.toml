@@ -8,5 +8,6 @@ lithos-events = {path = "../../crates/lithos/lithos-events"}
 lithos-icc = {path = "../../crates/lithos/lithos-icc"}
 obsidian-config ={ path = "../../crates/obsidian/obsidian-config"}
 obsidian-engine = {path = "../../crates/obsidian/obsidian-engine"}
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }

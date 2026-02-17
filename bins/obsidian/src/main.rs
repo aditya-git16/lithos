@@ -6,6 +6,10 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // tungstenite+rustls in this workspace is built without rustls default crypto features.
+    // Install a process-level provider once before any TLS handshakes occur.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let config_path = "/Users/adityaanand/dev/lithos/config/obsidian/config.toml";
     let config = ObsidianConfig::load(&config_path)?;
 
