@@ -15,7 +15,7 @@ Lithos Performance Suite
 Usage: $(basename "$0") [mode] [options]
 
 Modes:
-  perf          Full suite: build + report + criterion + plot (default)
+  perf          Full suite: build + criterion + report + plot (default)
   bench         Criterion micro-benchmarks only
   plot          Generate plots from latest results
 
@@ -66,6 +66,12 @@ run_criterion() {
     echo ""
 }
 
+run_criterion_hot_path() {
+    echo "[bench] Running criterion bench_hot_path (for report inputs)..."
+    cargo bench -p lithos-perf --bench bench_hot_path 2>&1
+    echo ""
+}
+
 run_plots() {
     echo "[plot] Generating charts from latest results..."
     if ! command -v python3 &>/dev/null; then
@@ -113,6 +119,8 @@ echo ""
 case "$MODE" in
     perf)
         build_release
+        echo "[note] Running bench_hot_path first — perf_report reads its criterion JSON"
+        run_criterion_hot_path
         run_report
         run_plots
         run_flamegraph

@@ -1,42 +1,20 @@
+use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::mem::{align_of, size_of};
+use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
 use lithos_events::{SymbolId, TopOfBook};
-use lithos_icc::{BroadcastReader, BroadcastWriter, RingConfig};
+use lithos_icc::{BroadcastWriter, RingConfig};
 use lithos_perf::*;
 use lithos_perf_recorder::now_ns as perf_now_ns;
 use obsidian_engine::ObsidianProcessor;
-use obsidian_util::binance_book_ticker::parse_binance_book_ticker_fast;
-use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
+use obsidian_util::timestamp::now_ns as obs_now_ns;
 use onyx_core::MarketStateManager;
+use onyx_engine::OnyxEngine;
 
-// ─── Replay Corpus ──────────────────────────────────────────────────────────
-
-fn generate_replay_corpus(count: usize) -> Vec<String> {
-    let mut corpus = Vec::with_capacity(count);
-    // Vary prices/quantities to avoid branch prediction gaming
-    for i in 0..count {
-        let bid_whole = 10000 + (i % 9000);
-        let bid_frac = i % 100;
-        let ask_whole = bid_whole + 1;
-        let ask_frac = (i + 37) % 100;
-        let bid_qty_whole = (i % 50) + 1;
-        let bid_qty_frac = (i * 7) % 1000;
-        let ask_qty_whole = (i % 30) + 1;
-        let ask_qty_frac = (i * 13) % 1000;
-        corpus.push(format!(
-            r#"{{"u":{},"s":"BTCUSDT","b":"{}.{:02}","B":"{}.{:03}","a":"{}.{:02}","A":"{}.{:03}"}}"#,
-            400900000 + i,
-            bid_whole, bid_frac,
-            bid_qty_whole, bid_qty_frac,
-            ask_whole, ask_frac,
-            ask_qty_whole, ask_qty_frac,
-        ));
-    }
-    corpus
-}
+const NUM_SYMBOLS: u16 = 256;
 
 fn main() {
     let rusage_start = capture_rusage();
@@ -45,6 +23,7 @@ fn main() {
     let mut results: Vec<BenchResult> = Vec::new();
     let mut cross_thread_stats: Option<Stats> = None;
     let mut cross_thread_overruns: u64 = 0;
+    let mut cross_thread_filtered: u64 = 0;
     let mut soak_stats: Option<Stats> = None;
     let mut soak_windows: Vec<serde_json::Value> = Vec::new();
 
@@ -64,48 +43,63 @@ fn main() {
     section_clock(&mut results);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 4. Obsidian Path — ingest → publish
+    // 4. Criterion Hot Path Results (read from criterion JSON)
     // ═══════════════════════════════════════════════════════════════════════
-    section_obsidian_path(&mut results);
+    let criterion_dir = criterion_target_dir();
+    let estimates = read_criterion_estimates(&criterion_dir);
+    section_criterion_paths(&estimates);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 5. Onyx Path — read → state update
-    // ═══════════════════════════════════════════════════════════════════════
-    section_onyx_path(&mut results);
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 6. Pipeline Summary — single-thread sum + cross-thread measured
+    // 5. Cross-Thread Pipeline (measured e2e)
     // ═══════════════════════════════════════════════════════════════════════
     section_pipeline_summary(
+        &estimates,
         &mut results,
         &mut cross_thread_stats,
         &mut cross_thread_overruns,
+        &mut cross_thread_filtered,
     );
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 7. Soak Test
+    // 6. Soak Test
     // ═══════════════════════════════════════════════════════════════════════
     section_soak(&mut results, &mut soak_windows, &mut soak_stats);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 8. Resource Usage
+    // 7. Resource Usage
     // ═══════════════════════════════════════════════════════════════════════
     let rusage_end = capture_rusage();
     section_resources(&rusage_start, &rusage_end);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 10. JSON Output
+    // 8. JSON Output
     // ═══════════════════════════════════════════════════════════════════════
     save_results(
         &results,
         &cache,
+        &estimates,
         &cross_thread_stats,
         cross_thread_overruns,
+        cross_thread_filtered,
         &soak_stats,
         &soak_windows,
         &rusage_start,
         &rusage_end,
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Criterion target directory
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn criterion_target_dir() -> PathBuf {
+    // CARGO_MANIFEST_DIR = perf/, criterion output is in <workspace>/target/criterion
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    PathBuf::from(manifest)
+        .parent()
+        .unwrap()
+        .join("target")
+        .join("criterion")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -116,7 +110,7 @@ fn print_banner(cache: &CacheInfo) {
     let bar = "\u{2550}".repeat(90);
     println!("\n{bar}");
     println!("  LITHOS PERFORMANCE REPORT");
-    println!("  (instrumented Obsidian + Onyx)");
+    println!("  criterion micro + cross-thread e2e + soak");
     println!("{bar}\n");
 
     let os = run_cmd("uname", &["-srm"]).unwrap_or_else(|| "unknown".into());
@@ -250,169 +244,71 @@ fn section_clock(results: &mut Vec<BenchResult>) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Obsidian Path — WebSocket JSON → parse → build → publish to shm
+// Criterion Hot Path Display (reads JSON from criterion runs)
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn section_obsidian_path(results: &mut Vec<BenchResult>) {
-    section_header("OBSIDIAN PATH  (ingest → publish)");
-    print_table_header();
+fn section_criterion_paths(estimates: &BTreeMap<String, CriterionEstimate>) {
+    if estimates.is_empty() {
+        section_header("CRITERION HOT PATH RESULTS");
+        println!(
+            "  No criterion data found. Run: cargo bench -p lithos-perf --bench bench_hot_path"
+        );
+        return;
+    }
 
-    let corpus = generate_replay_corpus(1000);
+    // Obsidian path
+    let obs_steps: &[(&str, &str)] = &[
+        ("obsidian/parse_book_ticker_fast", "parse_book_ticker_fast"),
+        ("obsidian/parse_px_qty_x4", "parse_px_qty_x4"),
+        ("obsidian/build_tob", "build_tob"),
+        ("obsidian/publish", "publish"),
+    ];
+    let obs_e2e = ("obsidian/process_text", "process_text");
 
-    let mut idx = 0usize;
-    let r = measure_batched("parse_book_ticker_fast()", 2000, 10_000, 200, || {
-        black_box(parse_binance_book_ticker_fast(&corpus[idx % corpus.len()]));
-        idx += 1;
-    });
-    print_result_row(&r);
-    results.push(r);
+    print_criterion_path(
+        "OBSIDIAN HOT PATH",
+        "WebSocket JSON \u{2192} parse \u{2192} build \u{2192} publish",
+        obs_steps,
+        obs_e2e,
+        estimates,
+    );
 
-    let view = parse_binance_book_ticker_fast(&corpus[0]).unwrap();
-    let (b, b_qty, a, a_qty) = (view.b, view.b_qty, view.a, view.a_qty);
-    let r = measure_batched("parse_px/qty() ×4", 2000, 10_000, 200, || {
-        black_box(parse_px_2dp(black_box(b)));
-        black_box(parse_qty_3dp(black_box(b_qty)));
-        black_box(parse_px_2dp(black_box(a)));
-        black_box(parse_qty_3dp(black_box(a_qty)));
-    });
-    print_result_row(&r);
-    results.push(r);
+    // Onyx path
+    let onyx_steps: &[(&str, &str)] = &[
+        ("onyx/try_read", "try_read"),
+        ("onyx/update_market_state", "update_market_state"),
+    ];
+    let onyx_e2e = ("onyx/poll_event", "poll_event");
 
-    let r = measure_batched("TopOfBook { .. }", 2000, 10_000, 200, || {
-        black_box(TopOfBook {
-            ts_event_ns: 1234567890,
-            symbol_id: SymbolId(1),
-            bid_px_ticks: 1_234_567,
-            bid_qty_lots: 1_500,
-            ask_px_ticks: 1_234_568,
-            ask_qty_lots: 2_300,
-        });
-    });
-    print_result_row(&r);
-    results.push(r);
-
-    let shm_pub = temp_shm_path("microbench_pub");
-    BroadcastWriter::<TopOfBook>::create(&shm_pub, RingConfig::new(65536)).expect("create ring");
-    let mut writer = BroadcastWriter::<TopOfBook>::open(&shm_pub).expect("open writer");
-    let tob = make_test_tob();
-    let r = measure_batched("writer.publish()", 2000, 10_000, 200, || {
-        writer.publish(black_box(tob));
-    });
-    print_result_row(&r);
-    results.push(r);
-
-    // Stage total: full process_text() chain
-    let mut idx2 = 0usize;
-    let r = measure_batched("process_text()", 2000, 5_000, 200, || {
-        let msg = &corpus[idx2 % corpus.len()];
-        idx2 += 1;
-        let view = parse_binance_book_ticker_fast(msg).unwrap();
-        let bid_px = parse_px_2dp(view.b);
-        let bid_qty = parse_qty_3dp(view.b_qty);
-        let ask_px = parse_px_2dp(view.a);
-        let ask_qty = parse_qty_3dp(view.a_qty);
-        let tob = TopOfBook {
-            ts_event_ns: 0,
-            symbol_id: SymbolId(1),
-            bid_px_ticks: bid_px,
-            bid_qty_lots: bid_qty,
-            ask_px_ticks: ask_px,
-            ask_qty_lots: ask_qty,
-        };
-        writer.publish(black_box(tob));
-    });
-    println!("  {}", "\u{2500}".repeat(100));
-    print_total_row(&r);
-    results.push(r);
-
-    let _ = std::fs::remove_file(&shm_pub);
+    print_criterion_path(
+        "ONYX HOT PATH",
+        "read \u{2192} state update \u{2192} prefetch",
+        onyx_steps,
+        onyx_e2e,
+        estimates,
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Onyx Path — read from shm → update market state
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn section_onyx_path(results: &mut Vec<BenchResult>) {
-    section_header("ONYX PATH  (read → state update)");
-
-    let shm = temp_shm_path("microbench_onyx");
-    BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
-    let mut writer = BroadcastWriter::<TopOfBook>::open(&shm).expect("open writer");
-    let tob = make_test_tob();
-
-    print_table_header();
-
-    // Individual: reader.try_read()
-    {
-        let mut reader = BroadcastReader::<TopOfBook>::open(&shm).expect("open reader");
-        for _ in 0..65000 {
-            writer.publish(tob);
-        }
-        let r = measure_batched("reader.try_read()", 2000, 10_000, 200, || {
-            if reader.try_read().is_none() {
-                for _ in 0..1000 {
-                    writer.publish(tob);
-                }
-                reader.try_read();
-            }
-        });
-        print_result_row(&r);
-        results.push(r);
-    }
-
-    // Individual: update_market_state_tob()
-    let mut mgr = MarketStateManager::new();
-    let r = measure_batched("update_market_state_tob()", 2000, 10_000, 200, || {
-        mgr.update_market_state_tob(black_box(&tob));
-    });
-    print_result_row(&r);
-    results.push(r);
-
-    // Stage total: try_read + update combined
-    {
-        let mut reader = BroadcastReader::<TopOfBook>::open(&shm).expect("open reader");
-        for _ in 0..65000 {
-            writer.publish(tob);
-        }
-        let mut mgr2 = MarketStateManager::new();
-        let r = measure_batched("read→update()", 2000, 10_000, 200, || {
-            if let Some(event) = reader.try_read() {
-                mgr2.update_market_state_tob(black_box(&event));
-            } else {
-                for _ in 0..1000 {
-                    writer.publish(tob);
-                }
-                if let Some(event) = reader.try_read() {
-                    mgr2.update_market_state_tob(black_box(&event));
-                }
-            }
-        });
-        println!("  {}", "\u{2500}".repeat(100));
-        print_total_row(&r);
-        results.push(r);
-    }
-
-    let _ = std::fs::remove_file(&shm);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Pipeline Summary — single-thread sum + cross-thread measured
+// Cross-Thread Pipeline — criterion medians + measured e2e
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn section_pipeline_summary(
+    estimates: &BTreeMap<String, CriterionEstimate>,
     results: &mut Vec<BenchResult>,
     out_stats: &mut Option<Stats>,
     out_overruns: &mut u64,
+    out_filtered: &mut u64,
 ) {
-    // ── Cross-thread measurement ──
     let shm = temp_shm_path("xthread");
     let num_events = 200_000usize;
     let corpus = generate_replay_corpus(num_events);
 
     BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
 
+    // Warmup using production ObsidianProcessor
     {
-        let mut proc = ObsidianProcessor::new(&shm, SymbolId(1)).expect("processor");
+        let mut proc = ObsidianProcessor::new(&shm, SymbolId(0)).expect("processor");
         let warmup_json = r#"{"u":400900217,"s":"BTCUSDT","b":"12345.67","B":"0.123","a":"12345.68","A":"0.456"}"#;
         for _ in 0..1000 {
             proc.process_text(warmup_json);
@@ -424,20 +320,28 @@ fn section_pipeline_summary(
     let shm2 = shm.clone();
 
     let consumer = std::thread::spawn(move || {
-        let mut reader = BroadcastReader::<TopOfBook>::open(&shm2).expect("open reader");
-        let mut mgr = MarketStateManager::new();
+        set_thread_affinity(1); // Consumer on core 1
+        let mut engine = OnyxEngine::new(&shm2).expect("onyx engine");
         let mut latencies = Vec::with_capacity(num_events);
-        while reader.try_read().is_some() {}
+        // Drain stale data
+        while engine.reader.try_read().is_some() {}
 
         b2.wait();
-        let baseline_ts = perf_now_ns();
+        // Use the same clock as the producer (ObsidianProcessor::process_text
+        // stamps via obsidian_util::timestamp::now_ns = clock_gettime CLOCK_MONOTONIC).
+        let baseline_ts = obs_now_ns();
 
         let mut count = 0usize;
         let mut filtered = 0u64;
         while count < num_events {
-            if let Some(event) = reader.try_read() {
-                let recv = perf_now_ns();
-                mgr.update_market_state_tob(&event);
+            if let Some(event) = engine.reader.try_read() {
+                // Production OnyxEngine::process_event + prefetch + spin_loop
+                engine.market_state_manager.update_market_state_tob(&event);
+                engine.reader.prefetch_next();
+                core::hint::spin_loop();
+                // Timestamp AFTER all consumer work — aligned with poll_event criterion bench
+                // Uses same clock as producer (clock_gettime CLOCK_MONOTONIC)
+                let recv = obs_now_ns();
                 let lat = recv.saturating_sub(event.ts_event_ns);
                 if event.ts_event_ns >= baseline_ts && lat < 10_000_000 {
                     latencies.push(lat);
@@ -449,79 +353,102 @@ fn section_pipeline_summary(
                 std::hint::spin_loop();
             }
         }
-        let overruns = reader.overruns();
+        let overruns = engine.reader.overruns();
         (latencies, overruns, filtered)
     });
 
     barrier.wait();
+    set_thread_affinity(0); // Producer on core 0
 
+    // Producer: ObsidianProcessor::process_text with cycling symbol_id (production path)
     {
-        let mut writer = BroadcastWriter::<TopOfBook>::open(&shm).expect("writer");
+        let mut proc = ObsidianProcessor::new(&shm, SymbolId(0)).expect("processor");
         for (i, msg) in corpus.iter().enumerate() {
-            let view = parse_binance_book_ticker_fast(msg).unwrap();
-            let ts = perf_now_ns();
-            writer.publish(TopOfBook {
-                ts_event_ns: ts,
-                symbol_id: SymbolId((i % 64) as u16),
-                bid_px_ticks: parse_px_2dp(view.b),
-                bid_qty_lots: parse_qty_3dp(view.b_qty),
-                ask_px_ticks: parse_px_2dp(view.a),
-                ask_qty_lots: parse_qty_3dp(view.a_qty),
-            });
+            proc.symbol_id = SymbolId((i % NUM_SYMBOLS as usize) as u16);
+            proc.process_text(msg);
         }
     }
 
     let (mut latencies, overruns, filtered) = consumer.join().expect("consumer thread panicked");
     let _ = std::fs::remove_file(&shm);
 
-    // ── Print pipeline summary ──
-    section_header("PIPELINE SUMMARY");
+    // ── Display ──
+    println!("\n{}", "─".repeat(90));
+    println!("  CROSS-THREAD PIPELINE  (Obsidian thread \u{2192} mmap ring \u{2192} Onyx thread)");
+    println!("{}\n", "─".repeat(90));
 
-    let find = |name: &str| -> Option<&BenchResult> { results.iter().find(|r| r.name == name) };
+    // Get criterion medians for single-thread sum
+    let obs_median = estimates
+        .get("obsidian/process_text")
+        .map(|e| e.median_ns)
+        .unwrap_or(0.0);
+    let onyx_median = estimates
+        .get("onyx/poll_event")
+        .map(|e| e.median_ns)
+        .unwrap_or(0.0);
+    let sum_ns = obs_median + onyx_median;
 
-    let obs_p50 = find("process_text()").map(|r| r.stats.p50).unwrap_or(0);
-    let onyx_p50 = find("read→update()").map(|r| r.stats.p50).unwrap_or(0);
-    let sum_p50 = obs_p50 + onyx_p50;
-
-    println!("  Obsidian  process_text()     p50 = {} ns", obs_p50);
-    println!("  Onyx      read→update()      p50 = {} ns", onyx_p50);
-    println!("  {}", "\u{2500}".repeat(52));
-    println!("  Single-thread total (sum)    p50 = {} ns", sum_p50);
-    println!();
+    println!(
+        "  {:<44} {:>10}",
+        "Obsidian  process_text (criterion)",
+        format_ns(obs_median),
+    );
+    println!(
+        "  {:<44} {:>10}",
+        "Onyx      poll_event   (criterion)",
+        format_ns(onyx_median),
+    );
+    println!("  {:<44} {:>10}", "Single-thread sum", format_ns(sum_ns),);
+    println!("  {}", "─".repeat(80));
 
     if !latencies.is_empty() {
         let stats = compute_stats(&mut latencies);
         *out_stats = Some(stats.clone());
         *out_overruns = overruns;
-
-        let e2e_p50 = stats.p50;
-        let ipc = e2e_p50.saturating_sub(sum_p50);
+        *out_filtered = filtered;
 
         println!(
-            "  Cross-thread e2e (measured)   p50 = {} ns   (200K events, {} overruns, {} filtered)",
-            e2e_p50, overruns, filtered
+            "  {:<25} {:>10} {:>10} {:>10} {:>10}",
+            "", "p50", "p99", "p99.9", "max"
         );
         println!(
-            "  IPC cache-coherency overhead  p50 ≈ {} ns   (e2e − sum, core→core visibility)",
-            ipc
+            "  {:<25} {:>10} {:>10} {:>10} {:>10}",
+            "Cross-thread e2e",
+            format_ns(stats.p50 as f64),
+            format_ns(stats.p99 as f64),
+            format_ns(stats.p999 as f64),
+            format_ns(stats.max as f64),
         );
-        println!();
+        println!("  {}", "─".repeat(80));
 
-        print_table_header();
-        let r = BenchResult {
+        let ipc = (stats.p50 as f64) - sum_ns;
+        println!(
+            "  {:<44} {:>10}   (e2e p50 \u{2212} sum, core\u{2192}core)",
+            "IPC cache-coherency overhead",
+            format_ns(ipc),
+        );
+
+        println!(
+            "\n  {}K events | {} symbols | {} overruns | {} filtered",
+            num_events / 1000,
+            NUM_SYMBOLS,
+            overruns,
+            filtered,
+        );
+
+        results.push(BenchResult {
             name: "pipeline e2e".into(),
             unit: "ns".into(),
             stats,
-        };
-        print_result_row(&r);
-        results.push(r);
+        });
     } else {
         println!("  WARNING: Cross-thread measurement returned no data.");
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Soak Test
+// Soak Test — operational sanity gate
+// Catches: thermal/freq drift, throughput stability, tail growth, regressions
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn section_soak(
@@ -529,24 +456,32 @@ fn section_soak(
     windows: &mut Vec<serde_json::Value>,
     out_stats: &mut Option<Stats>,
 ) {
-    section_header("SOAK TEST (5s sustained, Obsidian + Onyx)");
+    section_header("SOAK TEST (5s sustained, 256 symbols)");
 
     let shm = temp_shm_path("soak_real");
     BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
 
-    let mut processor = ObsidianProcessor::new(&shm, SymbolId(1)).expect("processor");
-    let mut reader = BroadcastReader::<TopOfBook>::open(&shm).expect("reader");
-    let mut mgr = MarketStateManager::new();
+    // Both sides use production code paths
+    let mut proc = ObsidianProcessor::new(&shm, SymbolId(0)).expect("processor");
+    let mut engine = OnyxEngine::new(&shm).expect("onyx engine");
 
-    // Use a mix of replay messages
     let corpus = generate_replay_corpus(10_000);
+
+    // ── Warmup: fill caches, fault pages, stabilize frequency ──
+    for i in 0..100_000u64 {
+        let msg = &corpus[(i as usize) % corpus.len()];
+        proc.symbol_id = SymbolId((i as u16) % NUM_SYMBOLS);
+        proc.process_text(msg);
+        engine.poll_events();
+    }
 
     let duration_ns = 5_000_000_000u64;
     let sample_interval = 1000u64;
     let check_interval = 50_000u64;
 
     let mut total = 0u64;
-    let mut latencies = Vec::with_capacity(100_000);
+    let mut all_latencies = Vec::with_capacity(100_000);
+    let mut window_latencies: Vec<u64> = Vec::with_capacity(20_000);
     let mut window_count = 0u64;
     let mut window_idx = 1usize;
 
@@ -560,15 +495,19 @@ fn section_soak(
         let sample = total.is_multiple_of(sample_interval);
         let t0 = if sample { mono_now_ns() } else { 0 };
 
+        // Producer: production ObsidianProcessor::process_text with cycling symbols
         let msg = &corpus[(total as usize) % corpus.len()];
-        processor.process_text(msg);
-        if let Some(event) = reader.try_read() {
-            mgr.update_market_state_tob(black_box(&event));
-        }
+        proc.symbol_id = SymbolId(((total as usize) % NUM_SYMBOLS as usize) as u16);
+        proc.process_text(msg);
+
+        // Consumer: production OnyxEngine::poll_events()
+        engine.poll_events();
 
         if sample {
             let t1 = mono_now_ns();
-            latencies.push(t1.saturating_sub(t0));
+            let lat = t1.saturating_sub(t0);
+            all_latencies.push(lat);
+            window_latencies.push(lat);
         }
 
         if total.is_multiple_of(check_interval) {
@@ -576,21 +515,36 @@ fn section_soak(
             if now - window_start >= 1_000_000_000 {
                 let elapsed = now - window_start;
                 let tput = window_count as f64 / (elapsed as f64 / 1e9);
+
+                // Per-window latency stats for tail-growth detection
+                let (wp50, wp99, wmax) = if !window_latencies.is_empty() {
+                    let mut wl = std::mem::take(&mut window_latencies);
+                    let ws = compute_stats(&mut wl);
+                    (ws.p50, ws.p99, ws.max)
+                } else {
+                    (0, 0, 0)
+                };
+
                 windows.push(serde_json::json!({
                     "second": window_idx,
                     "events": window_count,
                     "elapsed_ns": elapsed,
                     "throughput_meps": tput / 1e6,
+                    "latency_p50_ns": wp50,
+                    "latency_p99_ns": wp99,
+                    "latency_max_ns": wmax,
                 }));
                 println!(
-                    "  Second {:<3}: {:>10} events  {:>8.1} M/s",
+                    "  Second {:<3}: {:>10} events  {:>8.1} M/s  p50={:>4} ns  p99={:>4} ns  max={:>6} ns",
                     window_idx,
                     format_count(window_count),
-                    tput / 1e6
+                    tput / 1e6,
+                    wp50, wp99, wmax,
                 );
                 window_idx += 1;
                 window_start = now;
                 window_count = 0;
+                window_latencies = Vec::with_capacity(20_000);
             }
             if now - start >= duration_ns {
                 break;
@@ -600,19 +554,42 @@ fn section_soak(
 
     let total_elapsed = mono_now_ns() - start;
     let overall_tput = total as f64 / (total_elapsed as f64 / 1e9);
+    let overruns = engine.reader.overruns();
+
     println!(
-        "\n  Total: {} events in {:.2}s ({:.1} M/s)",
+        "\n  Total: {} events in {:.2}s ({:.1} M/s) | {} overruns",
         format_count(total),
         total_elapsed as f64 / 1e9,
-        overall_tput / 1e6
+        overall_tput / 1e6,
+        overruns,
     );
 
-    if !latencies.is_empty() {
-        let stats = compute_stats(&mut latencies);
+    if !all_latencies.is_empty() {
+        let stats = compute_stats(&mut all_latencies);
         println!(
-            "  Sampled latency: p50={} ns  p90={} ns  p99={} ns  max={} ns",
-            stats.p50, stats.p90, stats.p99, stats.max
+            "  Aggregate: p50={} ns  p90={} ns  p99={} ns  p99.9={} ns  max={} ns",
+            stats.p50, stats.p90, stats.p99, stats.p999, stats.max
         );
+
+        // Throughput stability (CV%)
+        if windows.len() >= 2 {
+            let tputs: Vec<f64> = windows
+                .iter()
+                .filter_map(|w| w.get("throughput_meps").and_then(|v| v.as_f64()))
+                .collect();
+            if !tputs.is_empty() {
+                let mean = tputs.iter().sum::<f64>() / tputs.len() as f64;
+                let var =
+                    tputs.iter().map(|&t| (t - mean) * (t - mean)).sum::<f64>() / tputs.len() as f64;
+                let cv = if mean > 0.0 {
+                    var.sqrt() / mean * 100.0
+                } else {
+                    0.0
+                };
+                println!("  Throughput CV: {cv:.2}%");
+            }
+        }
+
         *out_stats = Some(stats.clone());
         results.push(BenchResult {
             name: "soak_latency".into(),
@@ -621,7 +598,6 @@ fn section_soak(
         });
     }
 
-    drop(processor);
     let _ = std::fs::remove_file(&shm);
 }
 
@@ -660,15 +636,17 @@ fn section_resources(start: &ResourceSnapshot, end: &ResourceSnapshot) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Save JSON
+// Save JSON — includes criterion data
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[allow(clippy::too_many_arguments)]
 fn save_results(
     results: &[BenchResult],
     cache: &CacheInfo,
+    criterion_estimates: &BTreeMap<String, CriterionEstimate>,
     cross_thread_stats: &Option<Stats>,
     cross_thread_overruns: u64,
+    cross_thread_filtered: u64,
     soak_stats: &Option<Stats>,
     soak_windows: &[serde_json::Value],
     rusage_start: &ResourceSnapshot,
@@ -682,14 +660,19 @@ fn save_results(
     let _ = std::fs::create_dir_all(results_dir);
     let json_path = format!("{results_dir}/{timestamp}_report.json");
 
+    // Convert criterion estimates to serializable format
+    let crit_json: Vec<&CriterionEstimate> = criterion_estimates.values().collect();
+
     let output = serde_json::json!({
         "report_type": "pipeline",
         "timestamp": timestamp,
         "system": cache,
         "stage_benchmarks": results,
+        "criterion_benchmarks": crit_json,
         "cross_thread": {
             "stats": cross_thread_stats,
             "overruns": cross_thread_overruns,
+            "filtered": cross_thread_filtered,
         },
         "soak": {
             "windows": soak_windows,
@@ -723,6 +706,52 @@ fn save_results(
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Hint the OS scheduler to run this thread on a distinct core.
+/// macOS: uses thread_affinity_policy (hint, not hard pin).
+/// Linux: uses sched_setaffinity (hard pin).
+fn set_thread_affinity(tag: usize) {
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        struct ThreadAffinityPolicy {
+            affinity_tag: i32,
+        }
+        const THREAD_AFFINITY_POLICY: u32 = 4;
+        unsafe extern "C" {
+            fn mach_thread_self() -> u32;
+            fn thread_policy_set(
+                thread: u32,
+                flavor: u32,
+                policy_info: *const i32,
+                count: u32,
+            ) -> i32;
+        }
+        unsafe {
+            let policy = ThreadAffinityPolicy {
+                affinity_tag: tag as i32 + 1,
+            };
+            thread_policy_set(
+                mach_thread_self(),
+                THREAD_AFFINITY_POLICY,
+                &policy as *const _ as *const i32,
+                1,
+            );
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            libc::CPU_SET(tag, &mut set);
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = tag;
+    }
+}
 
 fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
     std::process::Command::new(cmd)

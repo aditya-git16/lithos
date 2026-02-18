@@ -1,5 +1,7 @@
 use lithos_events::{SymbolId, TopOfBook};
+use std::collections::BTreeMap;
 use std::ffi::CString;
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -27,13 +29,6 @@ pub struct BenchResult {
     pub name: String,
     pub unit: String,
     pub stats: Stats,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct LayoutInfo {
-    pub type_name: String,
-    pub size: usize,
-    pub align: usize,
 }
 
 pub fn compute_stats(samples: &mut [u64]) -> Stats {
@@ -83,25 +78,6 @@ fn percentile_sorted(sorted: &[u64], pct: f64) -> u64 {
 
 // ─── Measurement Harness ────────────────────────────────────────────────────
 
-pub fn measure<F: FnMut()>(name: &str, iterations: usize, warmup: usize, mut f: F) -> BenchResult {
-    for _ in 0..warmup {
-        f();
-    }
-
-    let mut samples = Vec::with_capacity(iterations);
-    for _ in 0..iterations {
-        let start = Instant::now();
-        f();
-        samples.push(start.elapsed().as_nanos() as u64);
-    }
-
-    BenchResult {
-        name: name.to_string(),
-        unit: "ns".to_string(),
-        stats: compute_stats(&mut samples),
-    }
-}
-
 pub fn measure_batched<F: FnMut()>(
     name: &str,
     batches: usize,
@@ -119,7 +95,7 @@ pub fn measure_batched<F: FnMut()>(
         for _ in 0..batch_size {
             f();
         }
-        let total = start.elapsed().as_nanos() as u128;
+        let total = start.elapsed().as_nanos();
         let per_op = ((total + (batch_size as u128 / 2)) / batch_size as u128) as u64;
         samples.push(per_op.max(1));
     }
@@ -319,29 +295,6 @@ pub fn capture_rusage() -> ResourceSnapshot {
     }
 }
 
-// ─── Distribution Types ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QuantilePoint {
-    pub pct: f64,
-    pub value: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct HistBin {
-    pub lo: u64,
-    pub hi: u64,
-    pub count: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DistributionSeries {
-    pub name: String,
-    pub count: usize,
-    pub quantiles: Vec<QuantilePoint>,
-    pub hist: Vec<HistBin>,
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 pub fn temp_shm_path(label: &str) -> String {
@@ -362,97 +315,6 @@ pub fn make_test_tob() -> TopOfBook {
 
 pub const TEST_JSON: &str =
     r#"{"u":400900217,"s":"BTCUSDT","b":"12345.67","B":"0.123","a":"12345.68","A":"0.456"}"#;
-
-pub fn summarize_distribution(name: &str, samples: &[u64]) -> DistributionSeries {
-    let mut sorted = samples.to_vec();
-    sorted.sort_unstable();
-    let quantiles = quantile_profile_from_sorted(&sorted);
-    let hist = latency_histogram(&sorted);
-    DistributionSeries {
-        name: name.to_string(),
-        count: sorted.len(),
-        quantiles,
-        hist,
-    }
-}
-
-fn quantile_profile_from_sorted(sorted: &[u64]) -> Vec<QuantilePoint> {
-    if sorted.is_empty() {
-        return Vec::new();
-    }
-
-    let mut pcts: Vec<f64> = Vec::with_capacity(140);
-    pcts.push(0.0);
-    for i in 1..=99 {
-        pcts.push(i as f64);
-    }
-    for i in 991..=999 {
-        pcts.push(i as f64 / 10.0);
-    }
-    for i in 9_991..=9_999 {
-        pcts.push(i as f64 / 100.0);
-    }
-    for i in 99_991..=99_999 {
-        pcts.push(i as f64 / 1000.0);
-    }
-    pcts.push(100.0);
-
-    let mut out = Vec::with_capacity(pcts.len());
-    for pct in pcts {
-        out.push(QuantilePoint {
-            pct,
-            value: percentile_sorted(sorted, pct),
-        });
-    }
-    out
-}
-
-fn latency_histogram(sorted: &[u64]) -> Vec<HistBin> {
-    if sorted.is_empty() {
-        return Vec::new();
-    }
-
-    const EDGES: &[u64] = &[
-        0, 25, 50, 75, 100, 125, 150, 200, 300, 400, 500, 750, 1_000, 1_500, 2_000, 3_000, 5_000,
-        7_500, 10_000, 15_000, 20_000, 30_000, 50_000, 75_000, 100_000, 200_000, 500_000,
-        1_000_000, 2_000_000, 5_000_000, 10_000_000, 20_000_000,
-    ];
-
-    let mut bins: Vec<HistBin> = EDGES
-        .windows(2)
-        .map(|w| HistBin {
-            lo: w[0],
-            hi: w[1],
-            count: 0,
-        })
-        .collect();
-
-    let max_v = *sorted.last().unwrap_or(&0);
-    let final_hi = max_v.max(*EDGES.last().unwrap_or(&0)).saturating_add(1);
-    bins.push(HistBin {
-        lo: *EDGES.last().unwrap_or(&0),
-        hi: final_hi,
-        count: 0,
-    });
-
-    for &s in sorted {
-        let mut placed = false;
-        for b in &mut bins {
-            if s >= b.lo && s < b.hi {
-                b.count += 1;
-                placed = true;
-                break;
-            }
-        }
-        if !placed {
-            if let Some(last) = bins.last_mut() {
-                last.count += 1;
-            }
-        }
-    }
-
-    bins
-}
 
 #[inline(always)]
 #[cfg(target_os = "macos")]
@@ -525,22 +387,6 @@ pub fn print_result_row(r: &BenchResult) {
     );
 }
 
-pub fn print_total_row(r: &BenchResult) {
-    let label = format!("▸ {} [TOTAL]", r.name);
-    println!(
-        "  {:<30} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}  {}",
-        label,
-        r.stats.min,
-        r.stats.p50,
-        r.stats.p75,
-        r.stats.p90,
-        r.stats.p99,
-        r.stats.p999,
-        r.stats.max,
-        r.unit,
-    );
-}
-
 pub fn print_table_header() {
     println!(
         "  {:<30} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}  unit",
@@ -553,4 +399,202 @@ pub fn section_header(title: &str) {
     println!("\n{}", "─".repeat(90));
     println!("  {title}");
     println!("{}\n", "─".repeat(90));
+}
+
+// ─── Replay Corpus (shared by bench + report) ──────────────────────────────
+
+pub fn generate_replay_corpus(count: usize) -> Vec<String> {
+    let mut corpus = Vec::with_capacity(count);
+    for i in 0..count {
+        let bid_whole = 10000 + (i % 9000);
+        let bid_frac = i % 100;
+        let ask_whole = bid_whole + 1;
+        let ask_frac = (i + 37) % 100;
+        let bid_qty_whole = (i % 50) + 1;
+        let bid_qty_frac = (i * 7) % 1000;
+        let ask_qty_whole = (i % 30) + 1;
+        let ask_qty_frac = (i * 13) % 1000;
+        corpus.push(format!(
+            r#"{{"u":{},"s":"BTCUSDT","b":"{}.{:02}","B":"{}.{:03}","a":"{}.{:02}","A":"{}.{:03}"}}"#,
+            400900000 + i,
+            bid_whole, bid_frac,
+            bid_qty_whole, bid_qty_frac,
+            ask_whole, ask_frac,
+            ask_qty_whole, ask_qty_frac,
+        ));
+    }
+    corpus
+}
+
+// ─── Criterion JSON Reader ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CriterionEstimate {
+    pub name: String,
+    pub median_ns: f64,
+    pub mean_ns: f64,
+    pub stddev_ns: f64,
+}
+
+/// Read estimates.json from bench_hot_path's criterion groups only (obsidian/, onyx/).
+/// Scoped to prevent stale artifacts from other bench files leaking in.
+/// Returns a map of "group/bench_name" → CriterionEstimate.
+pub fn read_criterion_estimates(criterion_dir: &Path) -> BTreeMap<String, CriterionEstimate> {
+    let mut out = BTreeMap::new();
+    // Only walk the two groups produced by bench_hot_path.rs
+    for group in &["obsidian", "onyx"] {
+        let group_dir = criterion_dir.join(group);
+        if group_dir.is_dir() {
+            walk_criterion_dir(&group_dir, &mut out);
+        }
+    }
+    out
+}
+
+fn walk_criterion_dir(dir: &Path, out: &mut BTreeMap<String, CriterionEstimate>) {
+    let estimates = dir.join("new").join("estimates.json");
+    if estimates.is_file()
+        && let Some(est) = parse_criterion_estimates(&estimates, dir)
+    {
+        out.insert(est.name.clone(), est);
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && path.file_name().is_none_or(|n| n != "report") {
+                walk_criterion_dir(&path, out);
+            }
+        }
+    }
+}
+
+fn parse_criterion_estimates(json_path: &Path, bench_dir: &Path) -> Option<CriterionEstimate> {
+    let data = std::fs::read_to_string(json_path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&data).ok()?;
+
+    let median_ns = v.get("median")?.get("point_estimate")?.as_f64()?;
+    let mean_ns = v.get("mean")?.get("point_estimate")?.as_f64()?;
+    let stddev_ns = v.get("std_dev")?.get("point_estimate")?.as_f64()?;
+
+    // Build the name from the directory structure relative to criterion root.
+    // e.g. target/criterion/obsidian/parse_book_ticker_fast/new/estimates.json
+    // bench_dir = .../obsidian/parse_book_ticker_fast
+    // We want "obsidian/parse_book_ticker_fast"
+    let name = criterion_bench_name(bench_dir)?;
+
+    Some(CriterionEstimate {
+        name,
+        median_ns,
+        mean_ns,
+        stddev_ns,
+    })
+}
+
+fn criterion_bench_name(bench_dir: &Path) -> Option<String> {
+    // Walk up from bench_dir to find "criterion" parent, then take relative path
+    let mut parts = Vec::new();
+    let mut cur = bench_dir;
+    loop {
+        let name = cur.file_name()?.to_str()?;
+        if name == "criterion" {
+            break;
+        }
+        parts.push(name.to_string());
+        cur = cur.parent()?;
+    }
+    parts.reverse();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
+// ─── Criterion Display ─────────────────────────────────────────────────────
+
+pub fn format_ns(ns: f64) -> String {
+    let abs = ns.abs();
+    if abs >= 1_000_000.0 {
+        format!("{:.1} ms", ns / 1_000_000.0)
+    } else if abs >= 1_000.0 {
+        format!("{:.1} us", ns / 1_000.0)
+    } else {
+        format!("{:.0} ns", ns)
+    }
+}
+
+/// Print the criterion-based path table (obsidian or onyx).
+pub fn print_criterion_path(
+    title: &str,
+    subtitle: &str,
+    steps: &[(&str, &str)], // (criterion_key, display_name)
+    e2e: (&str, &str),      // (criterion_key, display_name)
+    estimates: &BTreeMap<String, CriterionEstimate>,
+) {
+    println!("\n{}", "─".repeat(90));
+    println!("  {title}  ({subtitle})");
+    println!("{}\n", "─".repeat(90));
+
+    println!(
+        "  {:<40} {:>10} {:>10} {:>10} {:>6}",
+        "Step", "median", "mean", "stddev", "%"
+    );
+    println!("  {}", "─".repeat(80));
+
+    let e2e_est = estimates.get(e2e.0);
+    let e2e_median = e2e_est.map(|e| e.median_ns).unwrap_or(0.0);
+
+    let mut sum_median = 0.0;
+    for &(key, display) in steps {
+        if let Some(est) = estimates.get(key) {
+            let pct = if e2e_median > 0.0 {
+                est.median_ns / e2e_median * 100.0
+            } else {
+                0.0
+            };
+            println!(
+                "  {:<40} {:>10} {:>10} {:>10} {:>5.0}%",
+                format!("{}()", display),
+                format_ns(est.median_ns),
+                format_ns(est.mean_ns),
+                format_ns(est.stddev_ns),
+                pct,
+            );
+            sum_median += est.median_ns;
+        }
+    }
+
+    println!("  {}", "─".repeat(80));
+
+    if let Some(est) = e2e_est {
+        println!(
+            "  {:<40} {:>10} {:>10} {:>10} {:>5}%",
+            format!("\u{25b8} {}  [e2e]", e2e.1),
+            format_ns(est.median_ns),
+            format_ns(est.mean_ns),
+            format_ns(est.stddev_ns),
+            "100",
+        );
+    }
+
+    println!(
+        "  {:<40} {:>10}",
+        "\u{03a3} steps",
+        format_ns(sum_median),
+    );
+
+    if e2e_median > 0.0 {
+        let overhead = e2e_median - sum_median;
+        let overhead_pct = overhead / e2e_median * 100.0;
+        println!(
+            "  {:<40} {:>10}   ({:.0}% of e2e)",
+            "\u{0394} intra-path overhead",
+            format_ns(overhead),
+            overhead_pct,
+        );
+    }
+
+    println!(
+        "\n  Note: % and \u{0394} are approximate — step medians come from independent"
+    );
+    println!("  criterion runs and are not statistically composable.");
 }

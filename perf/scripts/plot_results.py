@@ -106,15 +106,22 @@ def to_float(v, d=0.0):
     try: return float(v)
     except Exception: return d
 
-def fmt_ns(ns: int) -> str:
+def fmt_ns(ns) -> str:
+    ns = to_float(ns)
     if ns >= 1_000_000: return f"{ns/1e6:.1f}ms"
     if ns >= 1_000:     return f"{ns/1e3:.1f}us"
-    return f"{ns}ns"
+    return f"{ns:.0f}ns"
 
 def stat(bench_map, name, key):
     b = bench_map.get(name)
     if not b: return 0
     return max(0, to_int((b.get("stats") or {}).get(key, 0)))
+
+def crit_stat(crit_map, name, key="median_ns"):
+    """Get a criterion estimate value. key is one of median_ns, mean_ns, stddev_ns."""
+    b = crit_map.get(name)
+    if not b: return 0.0
+    return to_float(b.get(key, 0))
 
 def save(fig, d, name):
     fig.savefig(d / name)
@@ -152,74 +159,68 @@ def clean_dir(d: Path) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 01  Stage Cost Breakdown  (batched micro-benchmarks)
-#     The hero chart — shows accurate per-operation cost
+# 01  Stage Cost Breakdown  (criterion medians, median bar only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plot_stage_breakdown(bench_map, out):
+def plot_stage_breakdown(crit_map, out):
     stages = [
-        ("parse_book_ticker_fast()", "parse_book_ticker_fast()"),
-        ("parse_px/qty() ×4",       "parse_px/qty() ×4"),
-        ("TopOfBook { .. }",         "TopOfBook { .. }"),
-        ("writer.publish()",         "writer.publish()"),
-        ("reader.try_read()",        "reader.try_read()"),
-        ("update_market_state_tob()","update_market_state_tob()"),
+        ("obsidian/parse_book_ticker_fast", "parse_book_ticker_fast()"),
+        ("obsidian/parse_px_qty_x4",        "parse_px_qty_x4()"),
+        ("obsidian/build_tob",              "build_tob()"),
+        ("obsidian/publish",                "publish()"),
+        ("onyx/try_read",                   "try_read()"),
+        ("onyx/update_market_state",        "update_market_state()"),
     ]
-    labels, p50s, p99s, maxs = [], [], [], []
+    labels, medians = [], []
     for key, label in stages:
-        if key not in bench_map: continue
+        v = crit_stat(crit_map, key)
+        if v <= 0: continue
         labels.append(label)
-        p50s.append(max(1, stat(bench_map, key, "p50")))
-        p99s.append(max(1, stat(bench_map, key, "p99")))
-        maxs.append(max(1, stat(bench_map, key, "max")))
+        medians.append(max(1, v))
     if not labels: return
 
     fig, ax = plt.subplots(figsize=(10, 4.8))
     y = range(len(labels))
-    h = 0.25
+    h = 0.4
 
-    bars_50  = ax.barh([i + h for i in y], p50s, h, color=C_P50,  alpha=0.9, label="p50")
-    bars_99  = ax.barh(list(y),            p99s, h, color=C_P99,  alpha=0.9, label="p99")
-    bars_max = ax.barh([i - h for i in y], maxs, h, color=C_MAX,  alpha=0.7, label="max")
+    bars = ax.barh(list(y), medians, h, color=C_P50, alpha=0.9, label="median")
 
-    # Annotate p50 values inline
-    for i, v in enumerate(p50s):
-        ax.text(v + 0.8, i + h, f"{v}ns", va="center", fontsize=8, color=C_P50, weight="bold")
-    for i, v in enumerate(p99s):
-        ax.text(v + 0.8, i, f"{v}ns", va="center", fontsize=8, color=C_P99)
+    # Annotate values inline
+    for i, v in enumerate(medians):
+        ax.text(v + 0.5, i, fmt_ns(v), va="center", fontsize=9, color=C_P50, weight="bold")
 
     ax.set_yticks(list(y))
     ax.set_yticklabels(labels, fontsize=10)
     ax.set_xlabel("Latency (ns)")
     ax.invert_yaxis()
-    ax.legend(loc="lower right", ncols=3)
+    ax.legend(loc="lower right")
 
-    hot_path = stat(bench_map, "process_text()", "p50")
-    title = "Per-Function Latency (batched, amortised)"
-    if hot_path > 0:
-        title += f"  |  process_text() p50 = {fmt_ns(hot_path)}"
+    obs_e2e = crit_stat(crit_map, "obsidian/process_text")
+    title = "Per-Function Latency (criterion median)"
+    if obs_e2e > 0:
+        title += f"  |  process_text() = {fmt_ns(obs_e2e)}"
     ax.set_title(title)
     watermark(fig)
     save(fig, out, "01_stage_breakdown.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 02  Pipeline Waterfall  (cumulative p50 from batched data)
+# 02  Pipeline Waterfall  (criterion medians as segments)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plot_pipeline_waterfall(bench_map, out):
+def plot_pipeline_waterfall(crit_map, out):
     stages = [
-        ("parse_book_ticker_fast()", "parse_book_ticker_fast()", C_STAGE[0]),
-        ("parse_px/qty() ×4",       "parse_px/qty() ×4",        C_STAGE[2]),
-        ("TopOfBook { .. }",         "TopOfBook { .. }",         C_STAGE[3]),
-        ("writer.publish()",         "writer.publish()",          C_STAGE[4]),
-        ("reader.try_read()",        "reader.try_read()",        C_STAGE[5]),
-        ("update_market_state_tob()","update_market_state_tob()",C_STAGE[6]),
+        ("obsidian/parse_book_ticker_fast", "parse_book_ticker_fast()", C_STAGE[0]),
+        ("obsidian/parse_px_qty_x4",        "parse_px_qty_x4()",        C_STAGE[2]),
+        ("obsidian/build_tob",              "build_tob()",              C_STAGE[3]),
+        ("obsidian/publish",                "publish()",                 C_STAGE[4]),
+        ("onyx/try_read",                   "try_read()",               C_STAGE[5]),
+        ("onyx/update_market_state",        "update_market_state()",    C_STAGE[6]),
     ]
     labels, vals, colors = [], [], []
     for key, label, c in stages:
-        v = stat(bench_map, key, "p50")
-        if key not in bench_map: continue
+        v = crit_stat(crit_map, key)
+        if v <= 0: continue
         labels.append(label)
         vals.append(max(1, v))
         colors.append(c)
@@ -235,22 +236,22 @@ def plot_pipeline_waterfall(bench_map, out):
         lefts.append(cum)
         cum += v
 
-    bars = ax.barh(["pipeline"], [total], color=PANEL, edgecolor=BORDER, height=0.5)
+    ax.barh(["pipeline"], [total], color=PANEL, edgecolor=BORDER, height=0.5)
 
     # Stack segments
     for i, (v, left, c, label) in enumerate(zip(vals, lefts, colors, labels)):
         ax.barh(["pipeline"], [v], left=left, color=c, height=0.5, alpha=0.9)
         if v >= total * 0.04:  # only label segments > 4%
-            ax.text(left + v/2, 0, f"{label}\n{v}ns", ha="center", va="center",
+            ax.text(left + v/2, 0, f"{label}\n{fmt_ns(v)}", ha="center", va="center",
                     fontsize=8, color=FG_BRIGHT, weight="bold")
 
     ax.set_xlabel("Cumulative Latency (ns)")
-    ax.set_title(f"Pipeline Waterfall @ p50  (total: {fmt_ns(total)})")
+    ax.set_title(f"Pipeline Waterfall @ median  (total: {fmt_ns(total)})")
     ax.set_xlim(0, total * 1.05)
 
     # Legend
     from matplotlib.patches import Patch
-    handles = [Patch(facecolor=c, label=f"{l} ({v}ns)") for l, v, c in zip(labels, vals, colors)]
+    handles = [Patch(facecolor=c, label=f"{l} ({fmt_ns(v)})") for l, v, c in zip(labels, vals, colors)]
     ax.legend(handles=handles, loc="upper right", ncols=3, fontsize=8)
 
     watermark(fig)
@@ -258,29 +259,52 @@ def plot_pipeline_waterfall(bench_map, out):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 03  Component Percentile Matrix  (all batched benchmarks, p50 → max)
+# 03  Percentile Matrix  (full percentiles for e2e/soak, single median for micro)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plot_component_matrix(bench_map, out):
-    ordered = [
-        "parse_book_ticker_fast()",
-        "parse_px/qty() ×4",
-        "TopOfBook { .. }",
-        "writer.publish()",
-        "reader.try_read()",
-        "update_market_state_tob()",
-        "process_text()",
-        "read→update()",
-        "pipeline e2e",
-        "soak_latency",
+def plot_component_matrix(bench_map, crit_map, out):
+    # Criterion micro-benchmarks: only have median
+    crit_rows_keys = [
+        ("obsidian/parse_book_ticker_fast", "parse_book_ticker_fast()"),
+        ("obsidian/parse_px_qty_x4",        "parse_px_qty_x4()"),
+        ("obsidian/build_tob",              "build_tob()"),
+        ("obsidian/publish",                "publish()"),
+        ("obsidian/process_text",           "process_text() [e2e]"),
+        ("onyx/try_read",                   "try_read()"),
+        ("onyx/update_market_state",        "update_market_state()"),
+        ("onyx/poll_event",                 "poll_event() [e2e]"),
     ]
-    rows = [n for n in ordered if n in bench_map]
-    if not rows: return
+    # Full percentile rows from perf_report
+    full_rows = ["pipeline e2e", "soak_latency"]
 
     cols = ["p50", "p90", "p99", "p999", "max"]
-    col_labels = ["p50", "p90", "p99", "p99.9", "max"]
-    matrix = [[max(1, stat(bench_map, r, c)) for c in cols] for r in rows]
-    flat = [v for row in matrix for v in row]
+    col_labels = ["median", "p90", "p99", "p99.9", "max"]
+
+    rows = []
+    matrix = []
+    # Track which rows are criterion-only (only median available)
+    crit_row_indices = set()
+
+    for key, label in crit_rows_keys:
+        median = crit_stat(crit_map, key)
+        if median <= 0: continue
+        crit_row_indices.add(len(rows))
+        rows.append(label)
+        # Use median for p50 column, None for unavailable percentiles
+        v = max(1, int(round(median)))
+        matrix.append([v, None, None, None, None])
+
+    for name in full_rows:
+        if name not in bench_map: continue
+        rows.append(name)
+        matrix.append([max(1, stat(bench_map, name, c)) for c in cols])
+
+    if not rows: return
+
+    # For the heatmap, replace None with 0 (will be masked)
+    numeric_matrix = [[v if v is not None else 0 for v in row] for row in matrix]
+    flat = [v for row in numeric_matrix for v in row if v > 0]
+    if not flat: return
     vmin, vmax = max(1, min(flat)), max(flat)
 
     fig, ax = plt.subplots(figsize=(10, max(3.5, 0.42 * len(rows))))
@@ -289,8 +313,12 @@ def plot_component_matrix(bench_map, out):
         "#0D2137", "#164E6B", "#1B7D8E", "#D29922", "#E55934", "#C62828"
     ])
     from matplotlib.colors import LogNorm
+    import numpy as np
+    data = np.array(numeric_matrix, dtype=float)
+    # Mask unavailable cells (criterion rows, non-median columns)
+    masked = np.ma.masked_where(data == 0, data)
     norm = LogNorm(vmin=vmin, vmax=vmax)
-    im = ax.imshow(matrix, cmap=cmap, aspect="auto", norm=norm)
+    im = ax.imshow(masked, cmap=cmap, aspect="auto", norm=norm)
 
     ax.set_xticks(range(len(cols)))
     ax.set_xticklabels(col_labels)
@@ -299,11 +327,14 @@ def plot_component_matrix(bench_map, out):
 
     for i, row in enumerate(matrix):
         for j, v in enumerate(row):
-            brightness = (v - vmin) / max(1, vmax - vmin)
-            tc = FG_BRIGHT if brightness > 0.15 else FG_DIM
-            ax.text(j, i, fmt_ns(v), ha="center", va="center", fontsize=8, color=tc)
+            if v is None:
+                ax.text(j, i, "\u2014", ha="center", va="center", fontsize=9, color=FG_DIM)
+            else:
+                brightness = (v - vmin) / max(1, vmax - vmin)
+                tc = FG_BRIGHT if brightness > 0.15 else FG_DIM
+                ax.text(j, i, fmt_ns(v), ha="center", va="center", fontsize=8, color=tc)
 
-    ax.set_title("Percentile Matrix (all benchmarks)")
+    ax.set_title("Percentile Matrix (criterion + measured)")
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
     cbar.set_label("ns", color=FG)
     cbar.ax.yaxis.set_tick_params(color=FG_DIM)
@@ -313,15 +344,13 @@ def plot_component_matrix(bench_map, out):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 04  E2E Latency Profile  (pipeline e2e percentile ladder)
+# 04  E2E Latency Profile  (pipeline e2e + soak only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def plot_e2e_profile(bench_map, out):
     paths = [
         ("pipeline e2e",   "Cross-thread e2e",     C_P50),
         ("soak_latency",   "Soak (sustained)",      C_WARN),
-        ("process_text()", "Obsidian process_text()", C_STAGE[2]),
-        ("read→update()",  "Onyx read→update()",    C_STAGE[5]),
     ]
     pctls = ["p50", "p75", "p90", "p95", "p99", "p999", "p9999", "max"]
     pctl_labels = ["p50", "p75", "p90", "p95", "p99", "p99.9", "p99.99", "max"]
@@ -349,7 +378,7 @@ def plot_e2e_profile(bench_map, out):
     ax.set_xticks(range(len(pctls)))
     ax.set_xticklabels(pctl_labels, rotation=45, ha="right")
     ax.set_ylabel("Latency (ns)")
-    ax.set_title("Latency Percentile Profile")
+    ax.set_title("Latency Percentile Profile (e2e + soak)")
     ax.legend(loc="upper left")
 
     # Shade regions
@@ -369,7 +398,6 @@ def plot_e2e_profile(bench_map, out):
 
 def plot_tail_amplification(bench_map, out):
     targets = [
-        "process_text()",
         "pipeline e2e",
         "soak_latency",
     ]
@@ -474,7 +502,7 @@ def plot_soak_stability(data, bench_map, out):
 # 07  System & Pipeline Summary Card
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plot_summary_card(data, bench_map, out):
+def plot_summary_card(data, bench_map, crit_map, out):
     sys_info = data.get("system", {})
     resources = data.get("resources", {})
     delta = resources.get("delta", {})
@@ -498,15 +526,16 @@ def plot_summary_card(data, bench_map, out):
         ax.text(0.05, 0.85 - i*0.17, k, fontsize=10, color=FG_DIM, va="top")
         ax.text(0.35, 0.85 - i*0.17, v, fontsize=10, color=FG, va="top")
 
-    # Column 2: Pipeline Latency
+    # Column 2: Pipeline Latency (use criterion medians for Obsidian/Onyx)
     ax = axes[1]
     ax.set_title("Pipeline Latency", fontsize=12, color=FG_BRIGHT, weight="bold", loc="left", pad=10)
-    obs_p50 = stat(bench_map, "process_text()", "p50")
-    onyx_p50 = stat(bench_map, "read→update()", "p50")
+    obs_p50 = crit_stat(crit_map, "obsidian/process_text")
+    onyx_p50 = crit_stat(crit_map, "onyx/poll_event")
+    sum_p50 = obs_p50 + onyx_p50 if obs_p50 and onyx_p50 else 0
     lat_lines = [
         ("Obsidian p50",  obs_p50,  C_STAGE[2]),
         ("Onyx p50",      onyx_p50, C_STAGE[5]),
-        ("Sum p50",       obs_p50 + onyx_p50 if obs_p50 and onyx_p50 else 0, C_P50),
+        ("Sum p50",       sum_p50,  C_P50),
         ("E2E p50",       stat(bench_map, "pipeline e2e", "p50"), C_P50),
         ("E2E p99",       stat(bench_map, "pipeline e2e", "p99"), C_P99),
     ]
@@ -567,23 +596,28 @@ def main():
     with open(report, "r") as f:
         data = json.load(f)
 
+    # Stage benchmarks (from perf_report's own measurement harness)
     benches = (data.get("component_benchmarks") or data.get("stage_benchmarks")
                or data.get("benchmarks") or [])
     bench_map = {b["name"]: b for b in benches if "name" in b}
 
-    # Also add cross_thread stats
+    # Cross-thread stats
     cross = data.get("cross_thread", {}).get("stats")
     if cross and "pipeline e2e" not in bench_map:
         bench_map["pipeline e2e"] = {"name": "pipeline e2e", "stats": cross}
 
+    # Criterion benchmarks
+    crit_list = data.get("criterion_benchmarks") or []
+    crit_map = {b["name"]: b for b in crit_list if "name" in b}
+
     print("  Charts:")
-    plot_stage_breakdown(bench_map, out)
-    plot_pipeline_waterfall(bench_map, out)
-    plot_component_matrix(bench_map, out)
+    plot_stage_breakdown(crit_map, out)
+    plot_pipeline_waterfall(crit_map, out)
+    plot_component_matrix(bench_map, crit_map, out)
     plot_e2e_profile(bench_map, out)
     plot_tail_amplification(bench_map, out)
     plot_soak_stability(data, bench_map, out)
-    plot_summary_card(data, bench_map, out)
+    plot_summary_card(data, bench_map, crit_map, out)
 
     print(f"\n  All charts → {out}")
 
