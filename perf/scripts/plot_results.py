@@ -275,7 +275,7 @@ def plot_component_matrix(bench_map, crit_map, out):
         ("onyx/poll_event",                 "poll_event() [e2e]"),
     ]
     # Full percentile rows from perf_report
-    full_rows = ["pipeline e2e", "soak_latency"]
+    full_rows = ["pipeline e2e", "pipeline ipc_transfer", "pipeline consumer_work", "soak_latency"]
 
     cols = ["p50", "p90", "p99", "p999", "max"]
     col_labels = ["median", "p90", "p99", "p99.9", "max"]
@@ -349,8 +349,10 @@ def plot_component_matrix(bench_map, crit_map, out):
 
 def plot_e2e_profile(bench_map, out):
     paths = [
-        ("pipeline e2e",   "Cross-thread e2e",     C_P50),
-        ("soak_latency",   "Soak (sustained)",      C_WARN),
+        ("pipeline e2e",            "Cross-thread e2e",     C_P50),
+        ("pipeline ipc_transfer",   "IPC transfer",         C_STAGE[2]),
+        ("pipeline consumer_work",  "Consumer work",        C_STAGE[5]),
+        ("soak_latency",            "Soak (sustained)",     C_WARN),
     ]
     pctls = ["p50", "p75", "p90", "p95", "p99", "p999", "p9999", "max"]
     pctl_labels = ["p50", "p75", "p90", "p95", "p99", "p99.9", "p99.99", "max"]
@@ -399,6 +401,8 @@ def plot_e2e_profile(bench_map, out):
 def plot_tail_amplification(bench_map, out):
     targets = [
         "pipeline e2e",
+        "pipeline ipc_transfer",
+        "pipeline consumer_work",
         "soak_latency",
     ]
     rows = [t for t in targets if t in bench_map and stat(bench_map, t, "p50") > 0]
