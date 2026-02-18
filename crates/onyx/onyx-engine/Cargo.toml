@@ -3,11 +3,7 @@ name = "onyx-engine"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-perf = ["lithos-perf-recorder/record"]
-
 [dependencies]
 onyx-core = { path = "../onyx-core" }
 lithos-icc = { path = "../../lithos/lithos-icc" }
 lithos-events = { path = "../../lithos/lithos-events" }
-lithos-perf-recorder = { path = "../../lithos/lithos-perf-recorder", optional = true }

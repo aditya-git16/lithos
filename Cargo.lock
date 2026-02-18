@@ -635,7 +635,6 @@ version = "0.1.0"
 dependencies = [
  "lithos-events",
  "lithos-icc",
- "lithos-perf-recorder",
  "obsidian-config",
  "obsidian-core",
  "obsidian-util",
@@ -693,7 +692,6 @@ version = "0.1.0"
 dependencies = [
  "lithos-events",
  "lithos-icc",
- "lithos-perf-recorder",
  "onyx-core",
 ]
 

@@ -1,5 +1,3 @@
-pub mod report;
-
 use lithos_events::{SymbolId, TopOfBook};
 use std::ffi::CString;
 use std::sync::OnceLock;
@@ -516,6 +514,22 @@ pub fn print_result_row(r: &BenchResult) {
     println!(
         "  {:<30} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}  {}",
         r.name,
+        r.stats.min,
+        r.stats.p50,
+        r.stats.p75,
+        r.stats.p90,
+        r.stats.p99,
+        r.stats.p999,
+        r.stats.max,
+        r.unit,
+    );
+}
+
+pub fn print_total_row(r: &BenchResult) {
+    let label = format!("▸ {} [TOTAL]", r.name);
+    println!(
+        "  {:<30} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}  {}",
+        label,
         r.stats.min,
         r.stats.p50,
         r.stats.p75,

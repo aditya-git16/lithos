@@ -114,7 +114,6 @@ case "$MODE" in
     perf)
         build_release
         run_report
-        run_criterion
         run_plots
         run_flamegraph
         print_summary

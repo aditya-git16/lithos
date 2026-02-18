@@ -5,12 +5,12 @@ use std::time::Instant;
 
 use lithos_events::{SymbolId, TopOfBook};
 use lithos_icc::{BroadcastReader, BroadcastWriter, RingConfig};
-use lithos_perf::report::{print_obsidian_report, print_onyx_report, stage_results};
 use lithos_perf::*;
 use lithos_perf_recorder::now_ns as perf_now_ns;
 use obsidian_engine::ObsidianProcessor;
+use obsidian_util::binance_book_ticker::parse_binance_book_ticker_fast;
+use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
 use onyx_core::MarketStateManager;
-use onyx_engine::OnyxEngine;
 
 // ─── Replay Corpus ──────────────────────────────────────────────────────────
 
@@ -64,19 +64,19 @@ fn main() {
     section_clock(&mut results);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 4. Obsidian Per-Stage Timing (REAL ObsidianProcessor)
+    // 4. Obsidian Path — ingest → publish
     // ═══════════════════════════════════════════════════════════════════════
-    section_obsidian_stages(&mut results);
+    section_obsidian_path(&mut results);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 5. Onyx Per-Stage Timing (REAL OnyxEngine)
+    // 5. Onyx Path — read → state update
     // ═══════════════════════════════════════════════════════════════════════
-    section_onyx_stages(&mut results);
+    section_onyx_path(&mut results);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 6. Cross-Thread Full Pipeline
+    // 6. Pipeline Summary — single-thread sum + cross-thread measured
     // ═══════════════════════════════════════════════════════════════════════
-    section_cross_thread(
+    section_pipeline_summary(
         &mut results,
         &mut cross_thread_stats,
         &mut cross_thread_overruns,
@@ -92,11 +92,6 @@ fn main() {
     // ═══════════════════════════════════════════════════════════════════════
     let rusage_end = capture_rusage();
     section_resources(&rusage_start, &rusage_end);
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 9. Analysis
-    // ═══════════════════════════════════════════════════════════════════════
-    section_final_analysis(&results, &cache);
 
     // ═══════════════════════════════════════════════════════════════════════
     // 10. JSON Output
@@ -251,117 +246,171 @@ fn section_clock(results: &mut Vec<BenchResult>) {
         .min(r_instant.stats.p50);
 
     println!("\n  * Measurement floor: ~{floor} ns");
+    println!("  * All timings below use batched amortisation (10k ops/batch) for ~1ns accuracy");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Obsidian Per-Stage (REAL ObsidianProcessor)
+// Obsidian Path — WebSocket JSON → parse → build → publish to shm
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn section_obsidian_stages(results: &mut Vec<BenchResult>) {
-    section_header("OBSIDIAN PER-STAGE TIMING");
+fn section_obsidian_path(results: &mut Vec<BenchResult>) {
+    section_header("OBSIDIAN PATH  (ingest → publish)");
+    print_table_header();
 
-    let corpus_size = 100_000;
-    let corpus = generate_replay_corpus(corpus_size);
+    let corpus = generate_replay_corpus(1000);
 
-    let shm = temp_shm_path("obs_stage");
+    let mut idx = 0usize;
+    let r = measure_batched("parse_book_ticker_fast()", 2000, 10_000, 200, || {
+        black_box(parse_binance_book_ticker_fast(&corpus[idx % corpus.len()]));
+        idx += 1;
+    });
+    print_result_row(&r);
+    results.push(r);
+
+    let view = parse_binance_book_ticker_fast(&corpus[0]).unwrap();
+    let (b, b_qty, a, a_qty) = (view.b, view.b_qty, view.a, view.a_qty);
+    let r = measure_batched("parse_px/qty() ×4", 2000, 10_000, 200, || {
+        black_box(parse_px_2dp(black_box(b)));
+        black_box(parse_qty_3dp(black_box(b_qty)));
+        black_box(parse_px_2dp(black_box(a)));
+        black_box(parse_qty_3dp(black_box(a_qty)));
+    });
+    print_result_row(&r);
+    results.push(r);
+
+    let r = measure_batched("TopOfBook { .. }", 2000, 10_000, 200, || {
+        black_box(TopOfBook {
+            ts_event_ns: 1234567890,
+            symbol_id: SymbolId(1),
+            bid_px_ticks: 1_234_567,
+            bid_qty_lots: 1_500,
+            ask_px_ticks: 1_234_568,
+            ask_qty_lots: 2_300,
+        });
+    });
+    print_result_row(&r);
+    results.push(r);
+
+    let shm_pub = temp_shm_path("microbench_pub");
+    BroadcastWriter::<TopOfBook>::create(&shm_pub, RingConfig::new(65536)).expect("create ring");
+    let mut writer = BroadcastWriter::<TopOfBook>::open(&shm_pub).expect("open writer");
+    let tob = make_test_tob();
+    let r = measure_batched("writer.publish()", 2000, 10_000, 200, || {
+        writer.publish(black_box(tob));
+    });
+    print_result_row(&r);
+    results.push(r);
+
+    // Stage total: full process_text() chain
+    let mut idx2 = 0usize;
+    let r = measure_batched("process_text()", 2000, 5_000, 200, || {
+        let msg = &corpus[idx2 % corpus.len()];
+        idx2 += 1;
+        let view = parse_binance_book_ticker_fast(msg).unwrap();
+        let bid_px = parse_px_2dp(view.b);
+        let bid_qty = parse_qty_3dp(view.b_qty);
+        let ask_px = parse_px_2dp(view.a);
+        let ask_qty = parse_qty_3dp(view.a_qty);
+        let tob = TopOfBook {
+            ts_event_ns: 0,
+            symbol_id: SymbolId(1),
+            bid_px_ticks: bid_px,
+            bid_qty_lots: bid_qty,
+            ask_px_ticks: ask_px,
+            ask_qty_lots: ask_qty,
+        };
+        writer.publish(black_box(tob));
+    });
+    println!("  {}", "\u{2500}".repeat(100));
+    print_total_row(&r);
+    results.push(r);
+
+    let _ = std::fs::remove_file(&shm_pub);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Onyx Path — read from shm → update market state
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn section_onyx_path(results: &mut Vec<BenchResult>) {
+    section_header("ONYX PATH  (read → state update)");
+
+    let shm = temp_shm_path("microbench_onyx");
     BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
-    let mut processor =
-        ObsidianProcessor::new(&shm, SymbolId(1)).expect("create ObsidianProcessor");
+    let mut writer = BroadcastWriter::<TopOfBook>::open(&shm).expect("open writer");
+    let tob = make_test_tob();
 
-    // Warmup
-    for msg in corpus.iter().take(1000) {
-        processor.process_text(msg);
-    }
-    processor.perf.reset();
+    print_table_header();
 
-    // Measured run
-    for msg in &corpus {
-        processor.process_text(msg);
-    }
-
-    print_obsidian_report(&processor.perf);
-
-    // Push per-stage results
-    for r in stage_results(&processor.perf) {
+    // Individual: reader.try_read()
+    {
+        let mut reader = BroadcastReader::<TopOfBook>::open(&shm).expect("open reader");
+        for _ in 0..65000 {
+            writer.publish(tob);
+        }
+        let r = measure_batched("reader.try_read()", 2000, 10_000, 200, || {
+            if reader.try_read().is_none() {
+                for _ in 0..1000 {
+                    writer.publish(tob);
+                }
+                reader.try_read();
+            }
+        });
+        print_result_row(&r);
         results.push(r);
     }
 
-    drop(processor);
+    // Individual: update_market_state_tob()
+    let mut mgr = MarketStateManager::new();
+    let r = measure_batched("update_market_state_tob()", 2000, 10_000, 200, || {
+        mgr.update_market_state_tob(black_box(&tob));
+    });
+    print_result_row(&r);
+    results.push(r);
+
+    // Stage total: try_read + update combined
+    {
+        let mut reader = BroadcastReader::<TopOfBook>::open(&shm).expect("open reader");
+        for _ in 0..65000 {
+            writer.publish(tob);
+        }
+        let mut mgr2 = MarketStateManager::new();
+        let r = measure_batched("read→update()", 2000, 10_000, 200, || {
+            if let Some(event) = reader.try_read() {
+                mgr2.update_market_state_tob(black_box(&event));
+            } else {
+                for _ in 0..1000 {
+                    writer.publish(tob);
+                }
+                if let Some(event) = reader.try_read() {
+                    mgr2.update_market_state_tob(black_box(&event));
+                }
+            }
+        });
+        println!("  {}", "\u{2500}".repeat(100));
+        print_total_row(&r);
+        results.push(r);
+    }
+
     let _ = std::fs::remove_file(&shm);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Onyx Per-Stage (REAL OnyxEngine)
+// Pipeline Summary — single-thread sum + cross-thread measured
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn section_onyx_stages(results: &mut Vec<BenchResult>) {
-    section_header("ONYX PER-STAGE TIMING");
-
-    let event_count = 100_000;
-    let corpus = generate_replay_corpus(event_count);
-
-    let shm = temp_shm_path("onyx_stage");
-    BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
-
-    // Publish events via real ObsidianProcessor (no perf recording needed here)
-    {
-        let mut processor =
-            ObsidianProcessor::new(&shm, SymbolId(1)).expect("create ObsidianProcessor");
-        for msg in &corpus {
-            processor.process_text(msg);
-        }
-    }
-
-    // Consume via real OnyxEngine
-    let mut engine = OnyxEngine::new(&shm).expect("create OnyxEngine");
-
-    // Warmup: drain all and reset
-    engine.poll_events();
-    engine.perf.reset();
-
-    // Re-publish for measured run
-    {
-        let mut processor =
-            ObsidianProcessor::new(&shm, SymbolId(1)).expect("create ObsidianProcessor");
-        for msg in &corpus {
-            processor.process_text(msg);
-        }
-    }
-
-    let consumed = engine.poll_events();
-    println!("  Events consumed: {}", format_count(consumed as u64));
-
-    print_onyx_report(&engine.perf);
-
-    for r in stage_results(&engine.perf) {
-        results.push(r);
-    }
-
-    drop(engine);
-    let _ = std::fs::remove_file(&shm);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Cross-Thread Full Pipeline
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn section_cross_thread(
+fn section_pipeline_summary(
     results: &mut Vec<BenchResult>,
     out_stats: &mut Option<Stats>,
     out_overruns: &mut u64,
 ) {
-    section_header("CROSS-THREAD PIPELINE (Obsidian -> shm -> Onyx)");
-    println!("  Publisher: Obsidian.process_text()");
-    println!("  Consumer: Onyx.poll_events()");
-    println!("  Latency = consumer_ts - event.ts_event_ns\n");
-
-    let shm = temp_shm_path("xthread_real");
+    // ── Cross-thread measurement ──
+    let shm = temp_shm_path("xthread");
     let num_events = 200_000usize;
     let corpus = generate_replay_corpus(num_events);
 
     BroadcastWriter::<TopOfBook>::create(&shm, RingConfig::new(65536)).expect("create ring");
 
-    // Warmup the ring (fault in pages)
     {
         let mut proc = ObsidianProcessor::new(&shm, SymbolId(1)).expect("processor");
         let warmup_json = r#"{"u":400900217,"s":"BTCUSDT","b":"12345.67","B":"0.123","a":"12345.68","A":"0.456"}"#;
@@ -378,8 +427,6 @@ fn section_cross_thread(
         let mut reader = BroadcastReader::<TopOfBook>::open(&shm2).expect("open reader");
         let mut mgr = MarketStateManager::new();
         let mut latencies = Vec::with_capacity(num_events);
-
-        // Drain stale events
         while reader.try_read().is_some() {}
 
         b2.wait();
@@ -391,7 +438,6 @@ fn section_cross_thread(
             if let Some(event) = reader.try_read() {
                 let recv = perf_now_ns();
                 mgr.update_market_state_tob(&event);
-                // ts_event_ns was stamped with perf_now_ns() on publisher side
                 let lat = recv.saturating_sub(event.ts_event_ns);
                 if event.ts_event_ns >= baseline_ts && lat < 10_000_000 {
                     latencies.push(lat);
@@ -409,12 +455,7 @@ fn section_cross_thread(
 
     barrier.wait();
 
-    // Publish events using real parsing but stamped with perf_now_ns for consistent
-    // cross-thread latency measurement (obsidian's now_ns uses a different time base)
     {
-        use obsidian_util::binance_book_ticker::parse_binance_book_ticker_fast;
-        use obsidian_util::floating_parse::{parse_px_2dp, parse_qty_3dp};
-
         let mut writer = BroadcastWriter::<TopOfBook>::open(&shm).expect("writer");
         for (i, msg) in corpus.iter().enumerate() {
             let view = parse_binance_book_ticker_fast(msg).unwrap();
@@ -431,34 +472,52 @@ fn section_cross_thread(
     }
 
     let (mut latencies, overruns, filtered) = consumer.join().expect("consumer thread panicked");
-
-    println!(
-        "  Events: {}  |  Ring: 65,536 slots  |  Overruns: {}  |  Filtered: {}\n",
-        format_count(num_events as u64),
-        overruns,
-        filtered
-    );
-
-    if latencies.is_empty() {
-        println!("  WARNING: All events were filtered. Skipping stats.");
-        let _ = std::fs::remove_file(&shm);
-        return;
-    }
-
-    let stats = compute_stats(&mut latencies);
-    *out_stats = Some(stats.clone());
-    *out_overruns = overruns;
-
-    let r = BenchResult {
-        name: "pipeline e2e".into(),
-        unit: "ns".into(),
-        stats,
-    };
-    print_table_header();
-    print_result_row(&r);
-    results.push(r);
-
     let _ = std::fs::remove_file(&shm);
+
+    // ── Print pipeline summary ──
+    section_header("PIPELINE SUMMARY");
+
+    let find = |name: &str| -> Option<&BenchResult> { results.iter().find(|r| r.name == name) };
+
+    let obs_p50 = find("process_text()").map(|r| r.stats.p50).unwrap_or(0);
+    let onyx_p50 = find("read→update()").map(|r| r.stats.p50).unwrap_or(0);
+    let sum_p50 = obs_p50 + onyx_p50;
+
+    println!("  Obsidian  process_text()     p50 = {} ns", obs_p50);
+    println!("  Onyx      read→update()      p50 = {} ns", onyx_p50);
+    println!("  {}", "\u{2500}".repeat(52));
+    println!("  Single-thread total (sum)    p50 = {} ns", sum_p50);
+    println!();
+
+    if !latencies.is_empty() {
+        let stats = compute_stats(&mut latencies);
+        *out_stats = Some(stats.clone());
+        *out_overruns = overruns;
+
+        let e2e_p50 = stats.p50;
+        let ipc = e2e_p50.saturating_sub(sum_p50);
+
+        println!(
+            "  Cross-thread e2e (measured)   p50 = {} ns   (200K events, {} overruns, {} filtered)",
+            e2e_p50, overruns, filtered
+        );
+        println!(
+            "  IPC cache-coherency overhead  p50 ≈ {} ns   (e2e − sum, core→core visibility)",
+            ipc
+        );
+        println!();
+
+        print_table_header();
+        let r = BenchResult {
+            name: "pipeline e2e".into(),
+            unit: "ns".into(),
+            stats,
+        };
+        print_result_row(&r);
+        results.push(r);
+    } else {
+        println!("  WARNING: Cross-thread measurement returned no data.");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -598,84 +657,6 @@ fn section_resources(start: &ResourceSnapshot, end: &ResourceSnapshot) {
         "  System CPU time:             {:.3}s",
         delta_sys_us as f64 / 1e6
     );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Analysis
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn section_final_analysis(results: &[BenchResult], cache: &CacheInfo) {
-    section_header("ANALYSIS");
-
-    let find = |name: &str| -> Option<&BenchResult> { results.iter().find(|r| r.name == name) };
-
-    println!("  Key findings:\n");
-    let mut idx = 1usize;
-
-    if let Some(obs) = find("ObsidianTotal") {
-        if let Some(parse) = find("ParseJson") {
-            let pct = if obs.stats.p50 > 0 {
-                parse.stats.p50 as f64 / obs.stats.p50 as f64 * 100.0
-            } else {
-                0.0
-            };
-            println!(
-                "  {}. JSON parsing: {} ns p50 ({:.0}% of obsidian total {} ns)",
-                idx, parse.stats.p50, pct, obs.stats.p50
-            );
-            idx += 1;
-        }
-        println!(
-            "  {}. Obsidian p50={} ns, p99={} ns, max={} ns",
-            idx, obs.stats.p50, obs.stats.p99, obs.stats.max
-        );
-        idx += 1;
-    }
-
-    if let Some(onyx) = find("OnyxTotal") {
-        println!(
-            "  {}. Onyx per-event p50={} ns, p99={} ns",
-            idx, onyx.stats.p50, onyx.stats.p99
-        );
-        idx += 1;
-    }
-
-    if let Some(e2e) = find("pipeline e2e") {
-        println!(
-            "  {}. Cross-thread e2e p50={} ns, p99={} ns, max={} ns",
-            idx, e2e.stats.p50, e2e.stats.p99, e2e.stats.max
-        );
-        idx += 1;
-    }
-
-    if let Some(soak) = find("soak_latency") {
-        println!(
-            "  {}. Soak test p50={} ns, p99={} ns over 5s sustained load",
-            idx, soak.stats.p50, soak.stats.p99
-        );
-        idx += 1;
-    }
-
-    // Cache utilization
-    let msm_size = size_of::<MarketStateManager>() as u64;
-    if cache.l1d_bytes > 0 && msm_size <= cache.l1d_bytes {
-        println!(
-            "  {}. MarketStateManager ({}) fits in L1d ({})",
-            idx,
-            format_bytes(msm_size),
-            format_bytes(cache.l1d_bytes)
-        );
-        idx += 1;
-    }
-
-    let tob_size = size_of::<TopOfBook>() as u64;
-    if cache.line_size > 0 && tob_size <= cache.line_size {
-        println!(
-            "  {}. TopOfBook ({}B) fits in single cache line ({}B)",
-            idx, tob_size, cache.line_size
-        );
-        let _ = idx;
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

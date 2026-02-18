@@ -4,3 +4,4 @@ target/
 dev_docs/
 optimisation/
 perf/results/
+.claude

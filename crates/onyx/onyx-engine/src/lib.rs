@@ -3,14 +3,9 @@ use lithos_icc::BroadcastReader;
 use onyx_core::MarketStateManager;
 use std::path::Path;
 
-#[cfg(feature = "perf")]
-use lithos_perf_recorder::{PerfRecorder, PerfStage};
-
 pub struct OnyxEngine {
     pub market_state_manager: MarketStateManager,
     pub reader: BroadcastReader<TopOfBook>,
-    #[cfg(feature = "perf")]
-    pub perf: PerfRecorder,
 }
 
 impl OnyxEngine {
@@ -20,8 +15,6 @@ impl OnyxEngine {
         Ok(OnyxEngine {
             market_state_manager,
             reader,
-            #[cfg(feature = "perf")]
-            perf: PerfRecorder::new(),
         })
     }
 
@@ -31,41 +24,12 @@ impl OnyxEngine {
         }
     }
 
+    /// Drain all available events from the ring buffer.
     pub fn poll_events(&mut self) -> usize {
         let mut count = 0usize;
-        while let Some(event) = {
-            #[cfg(feature = "perf")]
-            self.perf.begin(PerfStage::TryRead);
-
-            let ev = self.reader.try_read();
-
-            #[cfg(feature = "perf")]
-            self.perf.end(PerfStage::TryRead);
-
-            ev
-        } {
-            #[cfg(feature = "perf")]
-            self.perf.begin(PerfStage::OnyxTotal);
-
-            #[cfg(feature = "perf")]
-            self.perf.begin(PerfStage::ProcessEvent);
-
+        while let Some(event) = self.reader.try_read() {
             self.process_event(&event);
-
-            #[cfg(feature = "perf")]
-            self.perf.end(PerfStage::ProcessEvent);
-
-            #[cfg(feature = "perf")]
-            self.perf.begin(PerfStage::PrefetchNext);
-
             self.reader.prefetch_next();
-
-            #[cfg(feature = "perf")]
-            self.perf.end(PerfStage::PrefetchNext);
-
-            #[cfg(feature = "perf")]
-            self.perf.end(PerfStage::OnyxTotal);
-
             core::hint::spin_loop();
             count += 1;
         }

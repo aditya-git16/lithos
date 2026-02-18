@@ -3,13 +3,9 @@ name = "obsidian-engine"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-perf = ["lithos-perf-recorder/record"]
-
 [dependencies]
 lithos-events = { path = "../../lithos/lithos-events"}
 lithos-icc = { path = "../../lithos/lithos-icc"}
-lithos-perf-recorder = { path = "../../lithos/lithos-perf-recorder", optional = true }
 obsidian-core ={ path = "../obsidian-core"}
 obsidian-config = {path = "../obsidian-config"}
 obsidian-util = {path = "../obsidian-util"}

@@ -8,10 +8,10 @@ lithos-events = { path = "../crates/lithos/lithos-events" }
 lithos-icc = { path = "../crates/lithos/lithos-icc" }
 lithos-mmap = { path = "../crates/lithos/lithos-mmap" }
 lithos-perf-recorder = { path = "../crates/lithos/lithos-perf-recorder", features = ["record"] }
-obsidian-engine = { path = "../crates/obsidian/obsidian-engine", features = ["perf"] }
+obsidian-engine = { path = "../crates/obsidian/obsidian-engine" }
 obsidian-util = { path = "../crates/obsidian/obsidian-util" }
 obsidian-core = { path = "../crates/obsidian/obsidian-core" }
-onyx-engine = { path = "../crates/onyx/onyx-engine", features = ["perf"] }
+onyx-engine = { path = "../crates/onyx/onyx-engine" }
 onyx-core = { path = "../crates/onyx/onyx-core" }
 libc = "0.2"
 serde = { workspace = true }
